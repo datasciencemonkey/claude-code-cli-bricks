@@ -1,0 +1,9 @@
+command:
+  - bash
+  - -c
+  - "python setup_claude.py && python app.py"
+env:
+  - name: DATABRICKS_HOST
+    value: https://fevm-serverless-9cefok.cloud.databricks.com
+  - name: DATABRICKS_TOKEN
+    valueFrom: DATABRICKS_TOKEN
