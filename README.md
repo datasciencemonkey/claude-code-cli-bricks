@@ -1,9 +1,19 @@
 # claude-code-cli-bricks
-  ```
-  TL;DR: Claude Code on Databricks Apps for All Databricks Users 🚀
-```
+#### What is it?
+
+TL;DR: Claude Code on Databricks Apps for All Databricks Users 🚀
+
 A browser-based terminal emulator built with Flask and xterm.js, designed for cloud development environments with Databricks workspace integration and Claude Code CLI support.
 
+### Why now?
+On Jan 26. 2026, Andrej Karpathy made [this viral tweet](https://x.com/karpathy/status/2015883857489522876?s=46&t=tEsLJXJnGFIkaWs-Bhs1yA). Boris Cherny, the creator of claude code responded and said the following.
+![alt text](image.png)
+
+This app template opens this up for all Databricks Users! ❤️
+
+No more pesky IDE setups, no bespoke tweaks. 
+
+Just use it all on Databricks, from the browser. Wired up to model serving endpoints on your workspace.
 
 ## Features
 
