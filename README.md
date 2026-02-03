@@ -1,5 +1,5 @@
 # claude-code-cli-bricks
-#### What is it?
+### What is it?
 
 TL;DR: Claude Code on Databricks Apps for All Databricks Users 🚀
 
