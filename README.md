@@ -1,6 +1,9 @@
 # claude-code-cli-bricks
-
+  ```
+  TL;DR: Claude Code on Databricks Apps for All Databricks Users 🚀
+```
 A browser-based terminal emulator built with Flask and xterm.js, designed for cloud development environments with Databricks workspace integration and Claude Code CLI support.
+
 
 ## Features
 
@@ -20,11 +23,17 @@ A browser-based terminal emulator built with Flask and xterm.js, designed for cl
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 
-### Installation
+## Deploying to Databricks
 
+1. Clone this repo to your Databricks Workspace
+2. Navigate to **Compute** → **Apps**
+3. Click **Create App** and select **Custom App**
+4. Point to the cloned repo and deploy
+
+### Installation
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/claude-code-cli-bricks.git
@@ -42,12 +51,6 @@ uv run python app.py
 
 Open http://localhost:8000 in your browser.
 
-## Deploying to Databricks
-
-1. Clone this repo to your Databricks Workspace
-2. Navigate to **Compute** → **Apps**
-3. Click **Create App** and select **Custom App**
-4. Point to the cloned repo and deploy
 
 ## Architecture
 
