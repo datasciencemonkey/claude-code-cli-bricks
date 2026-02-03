@@ -1,9 +1,16 @@
 import os
 import json
+import subprocess
 from pathlib import Path
 
+# Set HOME if not properly set
+if not os.environ.get("HOME") or os.environ["HOME"] == "/":
+    os.environ["HOME"] = "/app/python/source_code"
+
+home = Path(os.environ["HOME"])
+
 # Create ~/.claude directory
-claude_dir = Path.home() / ".claude"
+claude_dir = home / ".claude"
 claude_dir.mkdir(exist_ok=True)
 
 # 1. Write settings.json for Databricks model serving
@@ -24,8 +31,51 @@ claude_json = {
     "hasCompletedOnboarding": True
 }
 
-claude_json_path = Path.home() / ".claude.json"
+claude_json_path = home / ".claude.json"
 claude_json_path.write_text(json.dumps(claude_json, indent=2))
 
 print(f"Claude configured: {settings_path}")
 print(f"Onboarding skipped: {claude_json_path}")
+
+# 3. Install Claude Code CLI if not present
+local_bin = home / ".local" / "bin"
+claude_bin = local_bin / "claude"
+
+if not claude_bin.exists():
+    print("Installing Claude Code CLI...")
+    result = subprocess.run(
+        ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True
+    )
+    if result.returncode == 0:
+        print("Claude Code CLI installed successfully")
+    else:
+        print(f"CLI install warning: {result.stderr}")
+else:
+    print(f"Claude Code CLI already installed at {claude_bin}")
+
+# 4. Create projects directory
+projects_dir = home / "projects"
+projects_dir.mkdir(exist_ok=True)
+print(f"Projects directory: {projects_dir}")
+
+# 5. Set up git template with post-commit hook
+git_template_hooks = home / ".git-templates" / "hooks"
+git_template_hooks.mkdir(parents=True, exist_ok=True)
+
+post_commit_hook = git_template_hooks / "post-commit"
+post_commit_hook.write_text('''#!/bin/bash
+# Auto-sync to Databricks Workspace on commit
+source /app/python/source_code/.venv/bin/activate
+python /app/python/source_code/sync_to_workspace.py "$(pwd)" &
+''')
+post_commit_hook.chmod(0o755)
+
+# Configure git to use template for new repos
+subprocess.run(
+    ["git", "config", "--global", "init.templateDir", str(home / ".git-templates")],
+    capture_output=True
+)
+print("Git post-commit hook template configured")

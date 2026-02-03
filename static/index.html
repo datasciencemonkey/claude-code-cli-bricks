@@ -2,45 +2,128 @@
 <html>
 <head>
   <title>Terminal</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.css">
+  <link rel="stylesheet" href="/static/lib/xterm.css">
   <style>
-    body { margin: 0; background: #1e1e1e; }
+    body { margin: 0; background: #1e1e1e; color: #fff; font-family: monospace; }
     #terminal { height: 100vh; width: 100vw; }
+    #status { position: absolute; top: 10px; left: 10px; z-index: 1000; }
   </style>
 </head>
 <body>
+  <div id="status">Loading...</div>
   <div id="terminal"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.8.0/lib/addon-fit.js"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="/static/lib/xterm.js"></script>
+  <script src="/static/lib/addon-fit.js"></script>
   <script>
-    // Initialize terminal
-    const term = new Terminal({
-      cursorBlink: true,
-      theme: { background: '#1e1e1e' }
-    });
-    const fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(document.getElementById('terminal'));
-    fitAddon.fit();
+    const status = document.getElementById('status');
+    let sessionId = null;
+    let pollInterval = null;
 
-    // Connect to backend
-    const socket = io();
+    async function createSession() {
+      const resp = await fetch('/api/session', { method: 'POST' });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      return data.session_id;
+    }
 
-    // User types → send to backend
-    term.onData(data => socket.emit('input', data));
+    async function sendInput(input) {
+      if (!sessionId) return;
+      await fetch('/api/input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, input: input })
+      });
+    }
 
-    // Backend output → render in terminal
-    socket.on('output', data => term.write(data));
+    async function sendResize(cols, rows) {
+      if (!sessionId) return;
+      await fetch('/api/resize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, cols: cols, rows: rows })
+      });
+    }
 
-    // Handle resize
-    window.addEventListener('resize', () => fitAddon.fit());
+    async function pollOutput(term) {
+      if (!sessionId) return;
+      try {
+        const resp = await fetch('/api/output', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await resp.json();
+        if (data.output) {
+          term.write(data.output);
+        }
+      } catch (e) {
+        console.error('Poll error:', e);
+      }
+    }
 
-    // Welcome message
-    socket.on('connect', () => {
-      term.write('\x1b[32mConnected. Type "claude" to start coding.\x1b[0m\r\n\r\n');
-    });
+    async function init() {
+      try {
+        status.textContent = 'Initializing terminal...';
+
+        if (typeof Terminal === 'undefined') {
+          throw new Error('xterm.js not loaded');
+        }
+        if (typeof FitAddon === 'undefined') {
+          throw new Error('FitAddon not loaded');
+        }
+
+        // Initialize terminal
+        const term = new Terminal({
+          cursorBlink: true,
+          theme: { background: '#1e1e1e' }
+        });
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+
+        status.textContent = 'Creating session...';
+
+        // Create session
+        sessionId = await createSession();
+
+        // Send initial terminal size to PTY
+        await sendResize(term.cols, term.rows);
+
+        status.textContent = 'Connected!';
+        setTimeout(() => { status.style.display = 'none'; }, 1000);
+
+        term.write('\x1b[32mConnected. Type "claude" to start coding.\x1b[0m\r\n');
+        term.write('\x1b[90mProjects in ~/projects auto-sync to Workspace on git commit.\x1b[0m\r\n\r\n');
+
+        // User types → send to backend
+        term.onData(data => sendInput(data));
+
+        // Poll for output every 100ms
+        pollInterval = setInterval(() => pollOutput(term), 100);
+
+        // Handle resize - update both xterm and PTY
+        window.addEventListener('resize', () => {
+          fitAddon.fit();
+          sendResize(term.cols, term.rows);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+          if (sessionId) {
+            navigator.sendBeacon('/api/session', JSON.stringify({ session_id: sessionId }));
+          }
+        });
+
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.style.color = '#ff5555';
+        console.error(e);
+      }
+    }
+
+    init();
   </script>
 </body>
 </html>
