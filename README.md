@@ -9,6 +9,7 @@ A browser-based terminal emulator built with Flask and xterm.js, designed for cl
 - **Terminal Resizing** - Dynamic resize support for responsive layouts
 - **Databricks Integration** - Auto-sync projects to Databricks Workspace on git commits
 - **Claude Code CLI** - Pre-configured AI-assisted coding with Anthropic's Claude
+- **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
 
 ## Quick Start
 
