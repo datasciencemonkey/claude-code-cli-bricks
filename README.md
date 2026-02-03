@@ -4,12 +4,17 @@ A browser-based terminal emulator built with Flask and xterm.js, designed for cl
 
 ## Features
 
-- **Browser-based Terminal** - Full PTY support with xterm.js frontend
-- **Real-time I/O** - Responsive terminal with polling-based communication
-- **Terminal Resizing** - Dynamic resize support for responsive layouts
-- **Databricks Integration** - Auto-sync projects to Databricks Workspace on git commits
-- **Claude Code CLI** - Pre-configured to use the Databricks host from `app.yaml` as the Anthropic API endpoint
-- **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
+✅ **Browser-based Terminal** - Full PTY support with xterm.js frontend
+
+✅  **Real-time I/O** - Responsive terminal with polling-based communication
+
+✅ **Terminal Resizing** - Dynamic resize support for responsive layouts
+
+✅ **Databricks Workspace Integration** - Auto-sync projects to Databricks Workspace on git commits
+
+✅ **Claude Code CLI** - Pre-configured to use the Databricks hosted model via `app.yaml` as the API endpoint
+
+✅ **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
 
 ## Quick Start
 
@@ -114,7 +119,17 @@ This project is configured for deployment as a Databricks App.
 | `DATABRICKS_HOST` | Databricks workspace URL |
 | `DATABRICKS_TOKEN` | Personal Access Token (PAT) |
 
+### Create App
+
+First, create the app in your Databricks workspace:
+
+```bash
+databricks apps create claude-code-cli-bricks
+```
+
 ### Deploy
+
+Then deploy the code:
 
 ```bash
 databricks apps deploy claude-code-cli-bricks
