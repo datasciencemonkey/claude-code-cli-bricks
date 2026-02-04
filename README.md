@@ -19,23 +19,29 @@ Just use it all on Databricks, from the browser. Wired up to model serving endpo
 
 ✅ **Browser-based Terminal** - Full PTY support with xterm.js frontend
 
-✅  **Real-time I/O** - Responsive terminal with polling-based communication
+✅ **Real-time I/O** - Responsive terminal with polling-based communication
 
 ✅ **Terminal Resizing** - Dynamic resize support for responsive layouts
 
 ✅ **Databricks Workspace Integration** - Auto-sync projects to Databricks Workspace on git commits
 
-✅ **Claude Code CLI** - Pre-configured to use the Databricks hosted model via `app.yaml` as the API endpoint
+✅ **Claude Code CLI** - Pre-configured to use Databricks hosted models as the API endpoint
+
+✅ **Configurable Model** - Switch between Claude models via `app.yaml` (default: `databricks-claude-sonnet-4-5`)
 
 ✅ **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
 
-✅ **Pre-installed Skills** - 16 Databricks skills + Superpowers development workflows
+✅ **MCP Servers** - DeepWiki for GitHub docs, Exa for web search
 
-## Pre-installed Skills & Plugins
+### 30 Pre-installed Skills
 
-This app comes with Claude Code skills pre-configured for Databricks development.
+✅ **Databricks Skills (16)** - Make building Databricks products simple. Create dashboards, jobs, pipelines, agents, and more with guided workflows that understand Databricks APIs and best practices.
 
-### Databricks Skills (16)
+✅ **Superpowers Skills (14)** - Provide the agentic framework for Claude Code. Test-driven development, systematic debugging, brainstorming, parallel agent workflows, and structured planning for complex tasks.
+
+## Skill Details
+
+### Databricks Skills
 
 From [databricks-solutions/ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit):
 
@@ -47,11 +53,23 @@ From [databricks-solutions/ai-dev-kit](https://github.com/databricks-solutions/a
 | Development | asset-bundles, databricks-app-apx, databricks-app-python, databricks-python-sdk, databricks-config |
 | Reference | databricks-docs, unstructured-pdf-generation |
 
-### Superpowers Plugin
+### Development Workflow Skills
 
 From [obra/superpowers](https://github.com/obra/superpowers):
 
-Development workflow skills including brainstorming, test-driven-development, systematic-debugging, writing-plans, verification-before-completion, and more.
+- brainstorming, test-driven-development, systematic-debugging, writing-plans
+- verification-before-completion, executing-plans, dispatching-parallel-agents
+- subagent-driven-development, using-git-worktrees, requesting-code-review
+- receiving-code-review, finishing-a-development-branch, writing-skills, using-superpowers
+
+## MCP Servers
+
+Pre-configured MCP servers for enhanced capabilities:
+
+| Server | Description |
+|--------|-------------|
+| **DeepWiki** | AI-powered documentation for any GitHub repository |
+| **Exa** | Web search and code context retrieval |
 
 ### Updating Skills
 
@@ -59,7 +77,7 @@ Skills are bundled with the app. To update:
 
 1. Pull latest from [ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit)
 2. Copy `databricks-skills/*` to `.claude/skills/`
-3. For superpowers, pull latest from [obra/superpowers](https://github.com/obra/superpowers)
+3. For superpowers, pull latest from [obra/superpowers](https://github.com/obra/superpowers) and copy `skills/*` to `.claude/skills/`
 4. Redeploy the app
 
 ## Quick Start
@@ -127,15 +145,13 @@ Open http://localhost:8000 in your browser.
 ```
 claude-code-cli-bricks/
 ├── .claude/
-│   ├── skills/            # 16 Databricks skills
-│   └── plugins/
-│       └── superpowers/   # Superpowers development plugin
+│   └── skills/            # 30 pre-installed skills
 ├── app.py                 # Flask backend with PTY management
 ├── app.yaml               # Databricks Apps deployment config
 ├── app.yaml.template      # Template for app.yaml configuration
 ├── CLAUDE.md              # Claude Code welcome message
 ├── requirements.txt       # Python dependencies
-├── setup_claude.py        # Claude Code CLI configuration
+├── setup_claude.py        # Claude Code CLI + MCP configuration
 ├── sync_to_workspace.py   # Git hook for Databricks sync
 ├── static/
 │   ├── index.html         # Terminal UI
@@ -176,6 +192,7 @@ This project is configured for deployment as a Databricks App.
 |----------|-------------|
 | `DATABRICKS_HOST` | Databricks workspace URL |
 | `DATABRICKS_TOKEN` | Personal Access Token (PAT) |
+| `ANTHROPIC_MODEL` | Model name (default: `databricks-claude-sonnet-4-5`) |
 
 ### Create App
 

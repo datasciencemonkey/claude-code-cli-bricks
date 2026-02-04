@@ -16,7 +16,7 @@ claude_dir.mkdir(exist_ok=True)
 # 1. Write settings.json for Databricks model serving
 settings = {
     "env": {
-        "ANTHROPIC_MODEL": "databricks-claude-sonnet-4-5",
+        "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-sonnet-4-5"),
         "ANTHROPIC_BASE_URL": f"{os.environ['DATABRICKS_HOST']}/serving-endpoints/anthropic",
         "ANTHROPIC_AUTH_TOKEN": os.environ["DATABRICKS_TOKEN"],
         "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true"
@@ -26,16 +26,26 @@ settings = {
 settings_path = claude_dir / "settings.json"
 settings_path.write_text(json.dumps(settings, indent=2))
 
-# 2. Write ~/.claude.json to skip onboarding (v2.0.65+ fix)
+# 2. Write ~/.claude.json with onboarding skip AND MCP servers
 claude_json = {
-    "hasCompletedOnboarding": True
+    "hasCompletedOnboarding": True,
+    "mcpServers": {
+        "deepwiki": {
+            "type": "http",
+            "url": "https://mcp.deepwiki.com/mcp"
+        },
+        "exa": {
+            "type": "http",
+            "url": "https://mcp.exa.ai/mcp"
+        }
+    }
 }
 
 claude_json_path = home / ".claude.json"
 claude_json_path.write_text(json.dumps(claude_json, indent=2))
 
 print(f"Claude configured: {settings_path}")
-print(f"Onboarding skipped: {claude_json_path}")
+print(f"Onboarding skipped + MCPs configured: {claude_json_path}")
 
 # 3. Install Claude Code CLI if not present
 local_bin = home / ".local" / "bin"
@@ -61,11 +71,11 @@ projects_dir = home / "projects"
 projects_dir.mkdir(exist_ok=True)
 print(f"Projects directory: {projects_dir}")
 
-# 5. Set up git template with post-commit hook
-git_template_hooks = home / ".git-templates" / "hooks"
-git_template_hooks.mkdir(parents=True, exist_ok=True)
+# 5. Set up global git hooks directory (works for ALL repos including clones)
+global_hooks_dir = home / ".githooks"
+global_hooks_dir.mkdir(parents=True, exist_ok=True)
 
-post_commit_hook = git_template_hooks / "post-commit"
+post_commit_hook = global_hooks_dir / "post-commit"
 post_commit_hook.write_text('''#!/bin/bash
 # Auto-sync to Databricks Workspace on commit
 source /app/python/source_code/.venv/bin/activate
@@ -73,32 +83,9 @@ python /app/python/source_code/sync_to_workspace.py "$(pwd)" &
 ''')
 post_commit_hook.chmod(0o755)
 
-# Configure git to use template for new repos
+# Configure git to use global hooks for ALL repos (including clones)
 subprocess.run(
-    ["git", "config", "--global", "init.templateDir", str(home / ".git-templates")],
+    ["git", "config", "--global", "core.hooksPath", str(global_hooks_dir)],
     capture_output=True
 )
-print("Git post-commit hook template configured")
-
-# 6. Register bundled superpowers plugin
-plugins_dir = claude_dir / "plugins"
-plugins_dir.mkdir(exist_ok=True)
-
-installed_plugins = {
-    "version": 2,
-    "plugins": {
-        "superpowers@bundled": [
-            {
-                "scope": "user",
-                "installPath": str(home / ".claude" / "plugins" / "superpowers"),
-                "version": "4.0.3",
-                "installedAt": "2025-01-01T00:00:00.000Z",
-                "lastUpdated": "2025-01-01T00:00:00.000Z"
-            }
-        ]
-    }
-}
-
-plugins_json_path = plugins_dir / "installed_plugins.json"
-plugins_json_path.write_text(json.dumps(installed_plugins, indent=2))
-print("Superpowers plugin registered")
+print(f"Git hooks configured: {global_hooks_dir} (applies to all repos)")

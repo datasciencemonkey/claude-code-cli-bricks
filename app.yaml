@@ -6,6 +6,8 @@ env:
   - name: HOME
     value: /app/python/source_code
   - name: DATABRICKS_HOST
-    value: DATABRICKS_HOST
+    valueFrom: DATABRICKS_HOST
   - name: DATABRICKS_TOKEN
     valueFrom: DATABRICKS_TOKEN
+  - name: ANTHROPIC_MODEL
+    value: databricks-claude-sonnet-4-5
