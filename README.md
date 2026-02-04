@@ -215,16 +215,31 @@ This ensures your terminal session is private and uses your Databricks permissio
 First, create the app in your Databricks workspace:
 
 ```bash
-databricks apps create claude-code-cli-bricks
+databricks apps create xterm-terminal
 ```
 
-### Deploy
+### Deploy via CLI
 
-Then deploy the code:
+Deploy the code using the Databricks CLI:
 
 ```bash
-databricks apps deploy claude-code-cli-bricks
+# 1. Import project files to workspace (wipe clean first for fresh deploy)
+databricks workspace delete /Workspace/Users/<your-email>/xterm-experiment --recursive
+databricks workspace import-dir . /Workspace/Users/<your-email>/xterm-experiment --overwrite
+
+# 2. Deploy the app
+databricks apps deploy xterm-terminal --source-code-path /Workspace/Users/<your-email>/xterm-experiment
 ```
+
+Replace `<your-email>` with your Databricks username (e.g., `user@example.com`).
+
+### Automatic Git Configuration
+
+When the app starts, it automatically configures git with your Databricks identity:
+- **Email**: From your Databricks `userName`
+- **Name**: From your Databricks `displayName` (or derived from email)
+
+This means commits made within the app will be attributed to your Databricks account.
 
 ## Workspace Sync
 

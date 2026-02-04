@@ -46,7 +46,22 @@ if result.returncode == 0:
     import json
     try:
         user = json.loads(result.stdout)
-        print(f"Databricks CLI authenticated as: {user.get('userName', 'unknown')}")
+        email = user.get('userName', '')
+        display_name = user.get('displayName', '')
+        print(f"Databricks CLI authenticated as: {email}")
+
+        # Configure git with user's email and name
+        if email:
+            subprocess.run(["git", "config", "--global", "user.email", email], check=False)
+            print(f"Git configured with email: {email}")
+        if display_name:
+            subprocess.run(["git", "config", "--global", "user.name", display_name], check=False)
+            print(f"Git configured with name: {display_name}")
+        elif email:
+            # Fall back to email prefix as name if no display name
+            name_from_email = email.split('@')[0].replace('.', ' ').title()
+            subprocess.run(["git", "config", "--global", "user.name", name_from_email], check=False)
+            print(f"Git configured with name: {name_from_email}")
     except json.JSONDecodeError:
         print("Databricks CLI configured (couldn't parse user)")
 else:
