@@ -7,8 +7,20 @@ import select
 import subprocess
 import uuid
 import threading
+import signal
+import time
+import logging
 from flask import Flask, send_from_directory, request, jsonify, session
 from collections import deque
+
+# Session timeout configuration
+SESSION_TIMEOUT_SECONDS = 60        # No poll for 60s = dead session
+CLEANUP_INTERVAL_SECONDS = 30       # How often to check for stale sessions
+GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
+
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = os.urandom(24)
@@ -34,6 +46,51 @@ def read_pty_output(session_id, fd):
             break
 
 
+def terminate_session(session_id, pid, master_fd):
+    """Gracefully terminate a session: SIGHUP -> wait -> SIGKILL -> cleanup."""
+    logger.info(f"Terminating stale session {session_id} (pid={pid})")
+    try:
+        os.kill(pid, signal.SIGHUP)
+        time.sleep(GRACEFUL_SHUTDOWN_WAIT)
+
+        # Check if still alive, force kill if needed
+        try:
+            os.kill(pid, 0)  # Check if process exists
+            os.kill(pid, signal.SIGKILL)
+            logger.info(f"Force killed session {session_id} (pid={pid})")
+        except OSError:
+            pass  # Already dead
+
+        os.close(master_fd)
+    except OSError:
+        pass  # Process or fd already gone
+
+    with sessions_lock:
+        sessions.pop(session_id, None)
+
+
+def cleanup_stale_sessions():
+    """Background thread that removes sessions with no recent polling."""
+    while True:
+        time.sleep(CLEANUP_INTERVAL_SECONDS)
+
+        now = time.time()
+        stale_sessions = []
+
+        # Find stale sessions
+        with sessions_lock:
+            for session_id, session in sessions.items():
+                if now - session["last_poll_time"] > SESSION_TIMEOUT_SECONDS:
+                    stale_sessions.append((session_id, session["pid"], session["master_fd"]))
+
+        if stale_sessions:
+            logger.info(f"Found {len(stale_sessions)} stale session(s) to clean up")
+
+        # Terminate each stale session (outside the lock)
+        for session_id, pid, master_fd in stale_sessions:
+            terminate_session(session_id, pid, master_fd)
+
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
@@ -41,7 +98,12 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "sessions": len(sessions)})
+    with sessions_lock:
+        return jsonify({
+            "status": "healthy",
+            "active_sessions": len(sessions),
+            "session_timeout_seconds": SESSION_TIMEOUT_SECONDS
+        })
 
 
 @app.route("/api/session", methods=["POST"])
@@ -74,7 +136,9 @@ def create_session():
             sessions[session_id] = {
                 "master_fd": master_fd,
                 "pid": pid,
-                "output_buffer": deque(maxlen=1000)
+                "output_buffer": deque(maxlen=1000),
+                "last_poll_time": time.time(),
+                "created_at": time.time()
             }
 
         # Start background reader thread
@@ -116,6 +180,7 @@ def get_output():
         if session_id not in sessions:
             return jsonify({"error": "Session not found"}), 404
 
+        sessions[session_id]["last_poll_time"] = time.time()
         buffer = sessions[session_id]["output_buffer"]
         output = "".join(buffer)
         buffer.clear()
@@ -163,4 +228,9 @@ def delete_session():
 
 
 if __name__ == "__main__":
+    # Start background cleanup thread
+    cleanup_thread = threading.Thread(target=cleanup_stale_sessions, daemon=True)
+    cleanup_thread.start()
+    logger.info(f"Started session cleanup thread (timeout={SESSION_TIMEOUT_SECONDS}s, interval={CLEANUP_INTERVAL_SECONDS}s)")
+
     app.run(host="0.0.0.0", port=8000, threaded=True)
