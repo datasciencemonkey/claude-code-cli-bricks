@@ -29,6 +29,39 @@ Just use it all on Databricks, from the browser. Wired up to model serving endpo
 
 ✅ **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
 
+✅ **Pre-installed Skills** - 16 Databricks skills + Superpowers development workflows
+
+## Pre-installed Skills & Plugins
+
+This app comes with Claude Code skills pre-configured for Databricks development.
+
+### Databricks Skills (16)
+
+From [databricks-solutions/ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit):
+
+| Category | Skills |
+|----------|--------|
+| AI & Agents | agent-bricks, databricks-genie, mlflow-evaluation, model-serving |
+| Analytics | aibi-dashboards, databricks-unity-catalog |
+| Data Engineering | spark-declarative-pipelines, databricks-jobs, synthetic-data-generation |
+| Development | asset-bundles, databricks-app-apx, databricks-app-python, databricks-python-sdk, databricks-config |
+| Reference | databricks-docs, unstructured-pdf-generation |
+
+### Superpowers Plugin
+
+From [obra/superpowers](https://github.com/obra/superpowers):
+
+Development workflow skills including brainstorming, test-driven-development, systematic-debugging, writing-plans, verification-before-completion, and more.
+
+### Updating Skills
+
+Skills are bundled with the app. To update:
+
+1. Pull latest from [ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit)
+2. Copy `databricks-skills/*` to `.claude/skills/`
+3. For superpowers, pull latest from [obra/superpowers](https://github.com/obra/superpowers)
+4. Redeploy the app
+
 ## Quick Start
 
 ### Prerequisites
@@ -93,9 +126,14 @@ Open http://localhost:8000 in your browser.
 
 ```
 claude-code-cli-bricks/
+├── .claude/
+│   ├── skills/            # 16 Databricks skills
+│   └── plugins/
+│       └── superpowers/   # Superpowers development plugin
 ├── app.py                 # Flask backend with PTY management
 ├── app.yaml               # Databricks Apps deployment config
 ├── app.yaml.template      # Template for app.yaml configuration
+├── CLAUDE.md              # Claude Code welcome message
 ├── requirements.txt       # Python dependencies
 ├── setup_claude.py        # Claude Code CLI configuration
 ├── sync_to_workspace.py   # Git hook for Databricks sync

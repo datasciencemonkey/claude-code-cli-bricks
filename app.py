@@ -121,13 +121,18 @@ def create_session():
         local_bin = f"{shell_env['HOME']}/.local/bin"
         shell_env["PATH"] = f"{local_bin}:{shell_env.get('PATH', '')}"
 
+        # Start shell in ~/projects/ directory
+        projects_dir = os.path.join(shell_env["HOME"], "projects")
+        os.makedirs(projects_dir, exist_ok=True)
+
         pid = subprocess.Popen(
             ["/bin/bash"],
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
             preexec_fn=os.setsid,
-            env=shell_env
+            env=shell_env,
+            cwd=projects_dir
         ).pid
 
         session_id = str(uuid.uuid4())

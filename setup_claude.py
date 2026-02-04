@@ -79,3 +79,26 @@ subprocess.run(
     capture_output=True
 )
 print("Git post-commit hook template configured")
+
+# 6. Register bundled superpowers plugin
+plugins_dir = claude_dir / "plugins"
+plugins_dir.mkdir(exist_ok=True)
+
+installed_plugins = {
+    "version": 2,
+    "plugins": {
+        "superpowers@bundled": [
+            {
+                "scope": "user",
+                "installPath": str(home / ".claude" / "plugins" / "superpowers"),
+                "version": "4.0.3",
+                "installedAt": "2025-01-01T00:00:00.000Z",
+                "lastUpdated": "2025-01-01T00:00:00.000Z"
+            }
+        ]
+    }
+}
+
+plugins_json_path = plugins_dir / "installed_plugins.json"
+plugins_json_path.write_text(json.dumps(installed_plugins, indent=2))
+print("Superpowers plugin registered")
