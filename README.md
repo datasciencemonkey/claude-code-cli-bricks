@@ -31,6 +31,10 @@ Just use it all on Databricks, from the browser. Wired up to model serving endpo
 
 ✅ **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
 
+✅ **Databricks CLI** - Pre-configured with your PAT for immediate use
+
+✅ **Single-User Security** - Only the token owner can access the terminal
+
 ✅ **MCP Servers** - DeepWiki for GitHub docs, Exa for web search
 
 ### 30 Pre-installed Skills
@@ -152,6 +156,7 @@ claude-code-cli-bricks/
 ├── CLAUDE.md              # Claude Code welcome message
 ├── requirements.txt       # Python dependencies
 ├── setup_claude.py        # Claude Code CLI + MCP configuration
+├── setup_databricks.py    # Databricks CLI configuration
 ├── sync_to_workspace.py   # Git hook for Databricks sync
 ├── static/
 │   ├── index.html         # Terminal UI
@@ -191,8 +196,19 @@ This project is configured for deployment as a Databricks App.
 | Variable | Description |
 |----------|-------------|
 | `DATABRICKS_HOST` | Databricks workspace URL |
-| `DATABRICKS_TOKEN` | Personal Access Token (PAT) |
+| `DATABRICKS_TOKEN` | Your Personal Access Token (PAT) |
 | `ANTHROPIC_MODEL` | Model name (default: `databricks-claude-sonnet-4-5`) |
+
+### Security Model
+
+This is a **single-user app**. Each user deploys their own instance with their own PAT:
+
+1. The `DATABRICKS_TOKEN` in `app.yaml` identifies the owner
+2. At startup, the app determines the token owner via Databricks API
+3. Only requests from the token owner are allowed
+4. Other users see a 403 Forbidden error
+
+This ensures your terminal session is private and uses your Databricks permissions.
 
 ### Create App
 

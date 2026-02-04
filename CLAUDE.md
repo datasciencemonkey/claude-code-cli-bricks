@@ -40,6 +40,20 @@ From [obra/superpowers](https://github.com/obra/superpowers):
 - **DeepWiki** - AI-powered documentation for any GitHub repository
 - **Exa** - Web search and code context retrieval
 
+## Databricks CLI
+
+The Databricks CLI is pre-configured with your credentials. Test it:
+```bash
+databricks current-user me
+```
+
+Common commands:
+```bash
+databricks workspace list /Workspace/Users/
+databricks jobs list
+databricks clusters list
+```
+
 ## Project Setup
 
 Before starting any new project or documentation:

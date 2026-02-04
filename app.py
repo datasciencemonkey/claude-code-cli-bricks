@@ -29,6 +29,51 @@ app.secret_key = os.urandom(24)
 sessions = {}
 sessions_lock = threading.Lock()
 
+# Single-user security: only the token owner can access the terminal
+app_owner = None
+
+
+def get_token_owner():
+    """Get the owner email from DATABRICKS_TOKEN at startup."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        host = os.environ.get("DATABRICKS_HOST")
+        token = os.environ.get("DATABRICKS_TOKEN")
+        if not host or not token:
+            return None
+        w = WorkspaceClient(host=host, token=token, auth_type="pat")
+        return w.current_user.me().user_name
+    except Exception as e:
+        logger.warning(f"Could not determine token owner: {e}")
+        return None
+
+
+def get_request_user():
+    """Extract user email from Databricks Apps request headers."""
+    return request.headers.get("X-Forwarded-Email") or \
+           request.headers.get("X-Forwarded-User") or \
+           request.headers.get("X-Databricks-User-Email")
+
+
+def check_authorization():
+    """Check if the current user is authorized to access the app."""
+    # If owner not set (local dev or SDK unavailable), allow access
+    if not app_owner:
+        return True, None
+
+    current_user = get_request_user()
+
+    # If no user identity in request (local dev), allow access
+    if not current_user:
+        return True, None
+
+    # Check if current user is the owner
+    if current_user != app_owner:
+        logger.warning(f"Unauthorized access attempt by {current_user} (owner: {app_owner})")
+        return False, current_user
+
+    return True, None
+
 
 def read_pty_output(session_id, fd):
     """Background thread to read PTY output into buffer."""
@@ -89,6 +134,23 @@ def cleanup_stale_sessions():
         # Terminate each stale session (outside the lock)
         for session_id, pid, master_fd in stale_sessions:
             terminate_session(session_id, pid, master_fd)
+
+
+@app.before_request
+def authorize_request():
+    """Check authorization before processing any request."""
+    # Skip auth for health check
+    if request.path == "/health":
+        return None
+
+    authorized, user = check_authorization()
+    if not authorized:
+        return jsonify({
+            "error": "Unauthorized",
+            "message": f"This app belongs to {app_owner}. You are logged in as {user}."
+        }), 403
+
+    return None
 
 
 @app.route("/")
@@ -233,6 +295,13 @@ def delete_session():
 
 
 if __name__ == "__main__":
+    # Determine app owner from DATABRICKS_TOKEN
+    app_owner = get_token_owner()
+    if app_owner:
+        logger.info(f"App owner (from token): {app_owner}")
+    else:
+        logger.warning("Could not determine app owner - authorization disabled")
+
     # Start background cleanup thread
     cleanup_thread = threading.Thread(target=cleanup_stale_sessions, daemon=True)
     cleanup_thread.start()

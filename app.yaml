@@ -1,12 +1,12 @@
 command:
   - bash
   - -c
-  - "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true && python setup_claude.py && python app.py"
+  - "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true && python setup_claude.py && python setup_databricks.py && python app.py"
 env:
   - name: HOME
     value: /app/python/source_code
   - name: DATABRICKS_HOST
-    valueFrom: DATABRICKS_HOST
+    value: https://fevm-serverless-9cefok.cloud.databricks.com
   - name: DATABRICKS_TOKEN
     valueFrom: DATABRICKS_TOKEN
   - name: ANTHROPIC_MODEL
