@@ -13,6 +13,9 @@ import logging
 from flask import Flask, send_from_directory, request, jsonify, session
 from collections import deque
 
+os.environ.pop("DATABRICKS_CLIENT_ID", None)
+os.environ.pop("DATABRICKS_CLIENT_SECRET", None)
+
 # Session timeout configuration
 SESSION_TIMEOUT_SECONDS = 60        # No poll for 60s = dead session
 CLEANUP_INTERVAL_SECONDS = 30       # How often to check for stale sessions
@@ -295,6 +298,11 @@ def delete_session():
 
 
 if __name__ == "__main__":
+    
+    # Remove OAuth credentials - force PAT auth only
+    os.environ.pop("DATABRICKS_CLIENT_ID", None)
+    os.environ.pop("DATABRICKS_CLIENT_SECRET", None)
+
     # Determine app owner from DATABRICKS_TOKEN
     app_owner = get_token_owner()
     if app_owner:
