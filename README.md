@@ -27,6 +27,10 @@ Just use it all on Databricks, from the browser. Wired up to model serving endpo
 
 ✅ **Claude Code CLI** - Pre-configured to use Databricks hosted models as the API endpoint
 
+✅ **OpenCode CLI** - Pre-configured with Databricks as an OpenAI-compatible provider (Gemini, Claude, Llama models)
+
+✅ **Gemini CLI** - Pre-configured with Databricks-hosted Gemini models via Google-native endpoint
+
 ✅ **Configurable Model** - Switch between Claude models via `app.yaml` (default: `databricks-claude-sonnet-4-5`)
 
 ✅ **Micro Editor** - Ships with [micro](https://micro-editor.github.io/), a modern terminal-based text editor
@@ -156,7 +160,10 @@ claude-code-cli-bricks/
 ├── CLAUDE.md              # Claude Code welcome message
 ├── requirements.txt       # Python dependencies
 ├── setup_claude.py        # Claude Code CLI + MCP configuration
+├── setup_opencode.py      # OpenCode CLI + Databricks provider config
+├── setup_gemini.py        # Gemini CLI + Databricks endpoint config
 ├── setup_databricks.py    # Databricks CLI configuration
+├── test_integrations.py   # Integration tests for all CLI tools
 ├── sync_to_workspace.py   # Git hook for Databricks sync
 ├── static/
 │   ├── index.html         # Terminal UI
@@ -253,11 +260,60 @@ When deployed, git commits automatically sync your projects to Databricks Worksp
 
 This is enabled via a git post-commit hook configured by `setup_claude.py`.
 
+## AI CLI Tools
+
+Three AI coding CLIs are pre-configured to use Databricks Model Serving:
+
+### Claude Code
+Default CLI. Uses Anthropic-native protocol via `/serving-endpoints/anthropic`.
+```bash
+claude                                    # Start Claude Code
+```
+
+### OpenCode
+Uses OpenAI-compatible protocol via `/serving-endpoints`. Supports multiple model providers.
+```bash
+opencode                                                      # Start with default model
+opencode -m databricks/databricks-gemini-2-5-flash            # Use Gemini Flash
+opencode -m databricks/databricks-claude-sonnet-4-5           # Use Claude
+opencode -m databricks/databricks-meta-llama-3-3-70b-instruct # Use Llama
+```
+
+### Gemini CLI
+Uses Google Gemini-native protocol via `/serving-endpoints/google`.
+```bash
+gemini                        # Start Gemini CLI
+gemini -m gemini-2.5-flash    # Use Gemini 2.5 Flash
+gemini -m gemini-2.5-pro      # Use Gemini 2.5 Pro
+```
+
+### Available Databricks-Hosted Models
+
+| Model | OpenCode Name | Gemini CLI Name |
+|-------|---------------|-----------------|
+| Claude Sonnet 4.5 | `databricks/databricks-claude-sonnet-4-5` | N/A (use Claude Code) |
+| Gemini 2.5 Flash | `databricks/databricks-gemini-2-5-flash` | `gemini-2.5-flash` |
+| Gemini 2.5 Pro | `databricks/databricks-gemini-2-5-pro` | `gemini-2.5-pro` |
+| Llama 3.3 70B | `databricks/databricks-meta-llama-3-3-70b-instruct` | N/A |
+
+### Testing Integrations
+
+Run the integration test suite:
+```bash
+# Structural tests (no credentials needed)
+python test_integrations.py
+
+# Live API tests (with Databricks credentials)
+DATABRICKS_HOST=https://your-workspace.cloud.databricks.com \
+DATABRICKS_TOKEN=dapi-xxx \
+python test_integrations.py
+```
+
 ## Technologies
 
 - **Backend**: Flask, Python PTY/termios
 - **Frontend**: xterm.js, FitAddon
-- **Integration**: Databricks SDK, Claude Agent SDK
+- **Integration**: Databricks SDK, Claude Agent SDK, OpenCode, Gemini CLI
 
 ## License
 
