@@ -40,6 +40,28 @@ From [obra/superpowers](https://github.com/obra/superpowers):
 - **DeepWiki** - AI-powered documentation for any GitHub repository
 - **Exa** - Web search and code context retrieval
 
+## AI CLI Tools
+
+Three AI coding CLIs are pre-configured with Databricks Model Serving:
+
+| CLI | Command | Protocol | Models |
+|-----|---------|----------|--------|
+| **Claude Code** | `claude` | Anthropic-native | Claude Sonnet 4.5 |
+| **OpenCode** | `opencode` | OpenAI-compatible | Claude, Gemini, Llama |
+| **Gemini CLI** | `gemini` | Google Gemini-native | Gemini 2.5 Flash/Pro |
+
+Switch models in OpenCode:
+```bash
+opencode -m databricks/databricks-gemini-2-5-flash
+opencode -m databricks/databricks-claude-sonnet-4-5
+```
+
+Switch models in Gemini CLI:
+```bash
+gemini -m gemini-2.5-flash
+gemini -m gemini-2.5-pro
+```
+
 ## Databricks CLI
 
 The Databricks CLI is pre-configured with your credentials. Test it:
