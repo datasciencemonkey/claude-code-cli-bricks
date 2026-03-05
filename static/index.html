@@ -4,138 +4,587 @@
   <title>Terminal</title>
   <link rel="stylesheet" href="/static/lib/xterm.css">
   <style>
-    body { margin: 0; background: #1e1e1e; color: #fff; font-family: monospace; }
-    #terminal { height: 100vh; width: 100vw; }
-    #status { position: absolute; top: 10px; left: 10px; z-index: 1000; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #1e1e1e; color: #fff; font-family: monospace; overflow: hidden; }
+
+    /* Toolbar */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      background: #1e1e1e;
+      border-bottom: 1px solid #333;
+      height: 36px;
+      flex-shrink: 0;
+    }
+    #toolbar .toolbar-label {
+      color: #888;
+      font-size: 12px;
+      margin-right: 4px;
+    }
+    #toolbar .layout-btn {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 3px;
+      padding: 2px 10px;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #toolbar .layout-btn:hover { background: #444; }
+    #toolbar .layout-btn.active { background: #0078d4; color: #fff; border-color: #0078d4; }
+    #toolbar .pane-indicators {
+      display: flex;
+      gap: 4px;
+      margin-left: 16px;
+    }
+    #toolbar .pane-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+    }
+    #toolbar .pane-dot.active { background: #4ec9b0; }
+    #toolbar .pane-dot.focused { background: #0078d4; box-shadow: 0 0 4px #0078d4; }
+    #toolbar .shortcut-hint {
+      margin-left: auto;
+      color: #666;
+      font-size: 11px;
+    }
+
+    /* Pane container -- CSS grid */
+    #pane-container {
+      display: grid;
+      width: 100vw;
+      height: calc(100vh - 36px);
+      gap: 2px;
+      background: #111;
+    }
+    /* Layout grid templates */
+    #pane-container.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+    #pane-container.layout-hsplit { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+    #pane-container.layout-vsplit { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    #pane-container.layout-quad   { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+    /* Pane slot */
+    .pane-slot {
+      display: flex;
+      flex-direction: column;
+      background: #1e1e1e;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .pane-slot.focused { outline: 2px solid #0078d4; outline-offset: -2px; }
+
+    /* Pane header */
+    .pane-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 8px;
+      background: #252525;
+      border-bottom: 1px solid #333;
+      height: 24px;
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #999;
+    }
+    .pane-header .pane-title { user-select: none; }
+    .pane-header .close-btn {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .pane-header .close-btn:hover { color: #ff5555; }
+
+    /* Terminal container inside pane */
+    .pane-terminal {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Empty slot -- shows + button */
+    .pane-slot-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a1a;
+    }
+    .add-pane-btn {
+      background: #333;
+      color: #888;
+      border: 1px solid #555;
+      border-radius: 4px;
+      width: 48px;
+      height: 48px;
+      font-size: 28px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .add-pane-btn:hover { background: #444; color: #ccc; }
+
+    /* Status overlay */
+    #status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
+  <div id="toolbar">
+    <span class="toolbar-label">Layout:</span>
+    <button class="layout-btn active" data-layout="single">Single</button>
+    <button class="layout-btn" data-layout="hsplit">H-Split</button>
+    <button class="layout-btn" data-layout="vsplit">V-Split</button>
+    <button class="layout-btn" data-layout="quad">Quad</button>
+    <div class="pane-indicators" id="pane-indicators"></div>
+    <span class="shortcut-hint">Ctrl+Shift+N: cycle focus</span>
+  </div>
+  <div id="pane-container" class="layout-single"></div>
   <div id="status">Loading...</div>
-  <div id="terminal"></div>
 
   <script src="/static/lib/xterm.js"></script>
   <script src="/static/lib/addon-fit.js"></script>
   <script src="/static/lib/addon-web-links.js"></script>
   <script>
-    const status = document.getElementById('status');
-    let sessionId = null;
-    let pollInterval = null;
+    /* ===== TerminalPane: manages one xterm + session ===== */
+    class TerminalPane {
+      constructor(slotIndex) {
+        this.slotIndex = slotIndex;
+        this.sessionId = null;
+        this.term = null;
+        this.fitAddon = null;
+        this.element = null;
+        this.alive = false;
+      }
 
-    async function createSession() {
-      const resp = await fetch('/api/session', { method: 'POST' });
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error);
-      return data.session_id;
-    }
+      async init(container) {
+        // Build DOM
+        this.element = document.createElement('div');
+        this.element.className = 'pane-slot';
+        this.element.dataset.slot = this.slotIndex;
 
-    async function sendInput(input) {
-      if (!sessionId) return;
-      await fetch('/api/input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, input: input })
-      });
-    }
+        const header = document.createElement('div');
+        header.className = 'pane-header';
+        const title = document.createElement('span');
+        title.className = 'pane-title';
+        title.textContent = 'Terminal ' + (this.slotIndex + 1);
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'close-btn';
+        closeBtn.innerHTML = 'X';
+        closeBtn.title = 'Close terminal';
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          layoutManager.closePane(this.slotIndex);
+        });
+        header.appendChild(title);
+        header.appendChild(closeBtn);
 
-    async function sendResize(cols, rows) {
-      if (!sessionId) return;
-      await fetch('/api/resize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, cols: cols, rows: rows })
-      });
-    }
+        const termDiv = document.createElement('div');
+        termDiv.className = 'pane-terminal';
 
-    async function pollOutput(term) {
-      if (!sessionId) return;
-      try {
-        const resp = await fetch('/api/output', {
+        this.element.appendChild(header);
+        this.element.appendChild(termDiv);
+        container.appendChild(this.element);
+
+        // Click to focus
+        this.element.addEventListener('click', () => {
+          layoutManager.setFocus(this.slotIndex);
+        });
+
+        // Create xterm
+        this.term = new Terminal({
+          cursorBlink: true,
+          theme: { background: '#1e1e1e' },
+          fontSize: 13,
+        });
+        this.fitAddon = new FitAddon.FitAddon();
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        this.term.loadAddon(this.fitAddon);
+        this.term.loadAddon(webLinksAddon);
+        this.term.open(termDiv);
+
+        // Fit after a frame so the container has dimensions
+        await new Promise(r => requestAnimationFrame(r));
+        this.fitAddon.fit();
+
+        // Create PTY session
+        const resp = await fetch('/api/session', { method: 'POST' });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        this.sessionId = data.session_id;
+        this.alive = true;
+
+        // Send initial size
+        await this.sendResize();
+
+        // Greeting
+        this.term.write('\x1b[32mConnected. Type "claude" to start coding.\x1b[0m\r\n');
+        this.term.write('\x1b[90mProjects in ~/projects auto-sync to Workspace on git commit.\x1b[0m\r\n\r\n');
+
+        // Input handler
+        this.term.onData(input => {
+          if (!this.sessionId) return;
+          fetch('/api/input', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: this.sessionId, input: input })
+          });
+        });
+      }
+
+      async sendResize() {
+        if (!this.sessionId || !this.term) return;
+        await fetch('/api/resize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId })
+          body: JSON.stringify({
+            session_id: this.sessionId,
+            cols: this.term.cols,
+            rows: this.term.rows
+          })
         });
-        if (!resp.ok) {
-          // Session gone on server side — stop polling
-          cleanupSession();
-          term.write('\r\n\x1b[31mSession ended.\x1b[0m\r\n');
-          return;
+      }
+
+      fit() {
+        if (this.fitAddon && this.term && this.element) {
+          try {
+            this.fitAddon.fit();
+          } catch (e) { /* element may not be visible yet */ }
         }
-        const data = await resp.json();
-        if (data.output) {
-          term.write(data.output);
+      }
+
+      writeOutput(output) {
+        if (this.term && output) {
+          this.term.write(output);
         }
-        if (data.exited) {
-          term.write('\r\n\x1b[33mShell process exited. You can close this tab.\x1b[0m\r\n');
-          cleanupSession();
+      }
+
+      markExited() {
+        this.alive = false;
+        if (this.term) {
+          this.term.write('\r\n\x1b[33mShell process exited.\x1b[0m\r\n');
         }
-      } catch (e) {
-        console.error('Poll error:', e);
+      }
+
+      async destroy() {
+        this.alive = false;
+        if (this.sessionId) {
+          try {
+            navigator.sendBeacon(
+              '/api/session/close',
+              JSON.stringify({ session_id: this.sessionId })
+            );
+          } catch (e) { /* best effort */ }
+          this.sessionId = null;
+        }
+        if (this.term) {
+          this.term.dispose();
+          this.term = null;
+        }
+        if (this.element && this.element.parentNode) {
+          this.element.parentNode.removeChild(this.element);
+          this.element = null;
+        }
+      }
+
+      focus() {
+        if (this.term) this.term.focus();
       }
     }
 
-    function cleanupSession() {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
+    /* ===== LayoutManager: handles layout switching, pane lifecycle, polling ===== */
+    const LAYOUTS = {
+      single: { slots: 1 },
+      hsplit: { slots: 2 },
+      vsplit: { slots: 2 },
+      quad:   { slots: 4 },
+    };
+
+    class LayoutManager {
+      constructor() {
+        this.currentLayout = 'single';
+        this.panes = new Map();      // slotIndex -> TerminalPane | null
+        this.focusedSlot = 0;
+        this.pollTimer = null;
+        this.container = document.getElementById('pane-container');
       }
-      if (sessionId) {
-        navigator.sendBeacon('/api/session/close', JSON.stringify({ session_id: sessionId }));
-        sessionId = null;
+
+      async init() {
+        // Set up layout buttons
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+          btn.addEventListener('click', () => this.setLayout(btn.dataset.layout));
+        });
+
+        // Keyboard shortcut: Ctrl+Shift+N to cycle focus
+        document.addEventListener('keydown', (e) => {
+          if (e.ctrlKey && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+            e.preventDefault();
+            this.cycleFocus();
+          }
+        });
+
+        // Debounced resize handler
+        let resizeTimeout = null;
+        window.addEventListener('resize', () => {
+          if (resizeTimeout) clearTimeout(resizeTimeout);
+          resizeTimeout = setTimeout(() => this.handleResize(), 200);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => this.cleanup());
+
+        // Create initial pane
+        await this.createPaneInSlot(0);
+        this.setFocus(0);
+
+        // Start batch polling (single interval for all panes)
+        this.pollTimer = setInterval(() => this.batchPoll(), 100);
+
+        this.updateIndicators();
+      }
+
+      async setLayout(layout) {
+        if (!LAYOUTS[layout]) return;
+        this.currentLayout = layout;
+        const slotCount = LAYOUTS[layout].slots;
+
+        // Update container CSS class
+        this.container.className = 'layout-' + layout;
+
+        // Update toolbar buttons
+        document.querySelectorAll('.layout-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.layout === layout);
+        });
+
+        // Rebuild the container with correct number of slots
+        this.container.innerHTML = '';
+
+        for (let i = 0; i < slotCount; i++) {
+          const pane = this.panes.get(i);
+          if (pane && pane.element) {
+            this.container.appendChild(pane.element);
+          } else {
+            // Empty slot -- show add button
+            this.addEmptySlot(i);
+          }
+        }
+
+        // Fit all active panes after layout change
+        await new Promise(r => requestAnimationFrame(r));
+        for (const [idx, pane] of this.panes) {
+          if (pane && idx < slotCount) {
+            pane.fit();
+            pane.sendResize();
+          }
+        }
+
+        // Ensure focus is on a visible slot
+        if (this.focusedSlot >= slotCount) {
+          const activePanes = this.getActivePaneIndices();
+          this.setFocus(activePanes.length > 0 ? activePanes[0] : 0);
+        }
+
+        this.updateIndicators();
+      }
+
+      addEmptySlot(index) {
+        const slot = document.createElement('div');
+        slot.className = 'pane-slot pane-slot-empty';
+        slot.dataset.slot = index;
+        const btn = document.createElement('button');
+        btn.className = 'add-pane-btn';
+        btn.textContent = '+';
+        btn.title = 'Open terminal in this slot';
+        btn.addEventListener('click', () => this.createPaneInSlot(index));
+        slot.appendChild(btn);
+        this.container.appendChild(slot);
+      }
+
+      async createPaneInSlot(index) {
+        // Remove empty slot element if present
+        const existing = this.container.querySelector(`.pane-slot-empty[data-slot="${index}"]`);
+        if (existing) existing.remove();
+
+        // Also remove any existing pane in this slot
+        const oldPane = this.panes.get(index);
+        if (oldPane) await oldPane.destroy();
+
+        const pane = new TerminalPane(index);
+        this.panes.set(index, pane);
+        await pane.init(this.container);
+
+        // Reorder DOM children to match slot order
+        this.reorderSlots();
+
+        this.setFocus(index);
+        this.updateIndicators();
+      }
+
+      reorderSlots() {
+        const slotCount = LAYOUTS[this.currentLayout].slots;
+        const children = Array.from(this.container.children);
+        children.sort((a, b) => {
+          return parseInt(a.dataset.slot || '0') - parseInt(b.dataset.slot || '0');
+        });
+        children.forEach(child => this.container.appendChild(child));
+      }
+
+      async closePane(index) {
+        const pane = this.panes.get(index);
+        if (pane) {
+          await pane.destroy();
+          this.panes.delete(index);
+        }
+
+        // If no active panes remain, auto-create one in slot 0
+        if (this.getActivePaneIndices().length === 0) {
+          this.setLayout('single');
+          await this.createPaneInSlot(0);
+          return;
+        }
+
+        // Replace with empty slot in current layout
+        this.addEmptySlot(index);
+        this.reorderSlots();
+
+        // Move focus if the closed pane was focused
+        if (this.focusedSlot === index) {
+          const active = this.getActivePaneIndices();
+          if (active.length > 0) this.setFocus(active[0]);
+        }
+
+        this.updateIndicators();
+      }
+
+      getActivePaneIndices() {
+        const slotCount = LAYOUTS[this.currentLayout].slots;
+        const indices = [];
+        for (const [idx, pane] of this.panes) {
+          if (pane && idx < slotCount) indices.push(idx);
+        }
+        return indices.sort((a, b) => a - b);
+      }
+
+      setFocus(index) {
+        this.focusedSlot = index;
+        // Update visual indicators
+        this.container.querySelectorAll('.pane-slot').forEach(el => {
+          el.classList.toggle('focused', parseInt(el.dataset.slot) === index);
+        });
+        // Focus the terminal
+        const pane = this.panes.get(index);
+        if (pane) pane.focus();
+        this.updateIndicators();
+      }
+
+      cycleFocus() {
+        const active = this.getActivePaneIndices();
+        if (active.length <= 1) return;
+        const currentIdx = active.indexOf(this.focusedSlot);
+        const nextIdx = (currentIdx + 1) % active.length;
+        this.setFocus(active[nextIdx]);
+      }
+
+      handleResize() {
+        for (const [idx, pane] of this.panes) {
+          if (pane && idx < LAYOUTS[this.currentLayout].slots) {
+            pane.fit();
+            pane.sendResize();
+          }
+        }
+      }
+
+      async batchPoll() {
+        const sessionIds = [];
+        const paneMap = new Map(); // sessionId -> pane
+
+        for (const [idx, pane] of this.panes) {
+          if (pane && pane.sessionId && pane.alive) {
+            sessionIds.push(pane.sessionId);
+            paneMap.set(pane.sessionId, pane);
+          }
+        }
+
+        // Skip if no active sessions
+        if (sessionIds.length === 0) return;
+
+        try {
+          const resp = await fetch('/api/output-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_ids: sessionIds })
+          });
+
+          if (!resp.ok) return;
+          const data = await resp.json();
+
+          for (const [sid, result] of Object.entries(data.outputs || {})) {
+            const pane = paneMap.get(sid);
+            if (!pane) continue;
+            if (result.output) pane.writeOutput(result.output);
+            if (result.exited) pane.markExited();
+          }
+        } catch (e) {
+          console.error('Batch poll error:', e);
+        }
+      }
+
+      updateIndicators() {
+        const container = document.getElementById('pane-indicators');
+        const slotCount = LAYOUTS[this.currentLayout].slots;
+        container.innerHTML = '';
+        for (let i = 0; i < slotCount; i++) {
+          const dot = document.createElement('div');
+          dot.className = 'pane-dot';
+          const pane = this.panes.get(i);
+          if (pane) dot.classList.add('active');
+          if (i === this.focusedSlot && pane) dot.classList.add('focused');
+          container.appendChild(dot);
+        }
+      }
+
+      cleanup() {
+        if (this.pollTimer) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+        }
+        for (const [idx, pane] of this.panes) {
+          if (pane) pane.destroy();
+        }
+        this.panes.clear();
       }
     }
+
+    /* ===== Init ===== */
+    const layoutManager = new LayoutManager();
+    const status = document.getElementById('status');
 
     async function init() {
       try {
         status.textContent = 'Initializing terminal...';
 
-        if (typeof Terminal === 'undefined') {
-          throw new Error('xterm.js not loaded');
-        }
-        if (typeof FitAddon === 'undefined') {
-          throw new Error('FitAddon not loaded');
-        }
+        if (typeof Terminal === 'undefined') throw new Error('xterm.js not loaded');
+        if (typeof FitAddon === 'undefined') throw new Error('FitAddon not loaded');
 
-        // Initialize terminal
-        const term = new Terminal({
-          cursorBlink: true,
-          theme: { background: '#1e1e1e' }
-        });
-        const fitAddon = new FitAddon.FitAddon();
-        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
-        term.loadAddon(fitAddon);
-        term.loadAddon(webLinksAddon);
-        term.open(document.getElementById('terminal'));
-        fitAddon.fit();
-
-        status.textContent = 'Creating session...';
-
-        // Create session
-        sessionId = await createSession();
-
-        // Send initial terminal size to PTY
-        await sendResize(term.cols, term.rows);
+        await layoutManager.init();
 
         status.textContent = 'Connected!';
         setTimeout(() => { status.style.display = 'none'; }, 1000);
-
-        term.write('\x1b[32mConnected. Type "claude" to start coding.\x1b[0m\r\n');
-        term.write('\x1b[90mProjects in ~/projects auto-sync to Workspace on git commit.\x1b[0m\r\n\r\n');
-
-        // User types → send to backend
-        term.onData(data => sendInput(data));
-
-        // Poll for output every 100ms
-        pollInterval = setInterval(() => pollOutput(term), 100);
-
-        // Handle resize - update both xterm and PTY
-        window.addEventListener('resize', () => {
-          fitAddon.fit();
-          sendResize(term.cols, term.rows);
-        });
-
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', () => cleanupSession());
-
       } catch (e) {
         status.textContent = 'Error: ' + e.message;
         status.style.color = '#ff5555';

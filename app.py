@@ -113,6 +113,35 @@ def _setup_git_config():
     hooks_dir = os.path.join(home, ".githooks")
     os.makedirs(hooks_dir, exist_ok=True)
 
+    # Write git credential helper script
+    local_bin = os.path.join(home, ".local", "bin")
+    os.makedirs(local_bin, exist_ok=True)
+    credential_helper_path = os.path.join(local_bin, "git-credential-databricks")
+    with open(credential_helper_path, "w") as f:
+        f.write('#!/bin/bash\n')
+        f.write('# Git credential helper that uses DATABRICKS_TOKEN for HTTPS auth.\n')
+        f.write('# Implements the git credential helper protocol.\n')
+        f.write('\n')
+        f.write('# Only respond to "get" action; silently ignore store/erase.\n')
+        f.write('if [ "$1" != "get" ]; then\n')
+        f.write('    exit 0\n')
+        f.write('fi\n')
+        f.write('\n')
+        f.write('# Read stdin (protocol, host, etc.) -- required by protocol but we\n')
+        f.write('# serve credentials for all hosts.\n')
+        f.write('while IFS= read -r line; do\n')
+        f.write('    [ -z "$line" ] && break\n')
+        f.write('done\n')
+        f.write('\n')
+        f.write('# If DATABRICKS_TOKEN is not set, exit non-zero so git tries other helpers.\n')
+        f.write('if [ -z "$DATABRICKS_TOKEN" ]; then\n')
+        f.write('    exit 1\n')
+        f.write('fi\n')
+        f.write('\n')
+        f.write('printf "username=token\\npassword=%s\\n" "$DATABRICKS_TOKEN"\n')
+    os.chmod(credential_helper_path, 0o755)
+    logger.info(f"Git credential helper written to {credential_helper_path}")
+
     lines = []
     if user_email and display_name:
         lines.append("[user]")
@@ -120,6 +149,8 @@ def _setup_git_config():
         lines.append(f"\tname = {display_name}")
     lines.append("[core]")
     lines.append(f"\thooksPath = {hooks_dir}")
+    lines.append("[credential]")
+    lines.append(f"\thelper = {credential_helper_path}")
 
     with open(gitconfig_path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -463,6 +494,39 @@ def get_output():
         exited = session.get("exited", False)
 
     return jsonify({"output": output, "exited": exited})
+
+
+@app.route("/api/output-batch", methods=["POST"])
+def get_output_batch():
+    """Get output from multiple terminal sessions in one request.
+
+    Accepts: {"session_ids": ["id1", "id2", ...]}
+    Returns: {"outputs": {"id1": {"output": "...", "exited": false}, ...}}
+
+    Unknown session_ids are silently skipped (not an error).
+    """
+    data = request.json or {}
+    session_ids = data.get("session_ids")
+
+    if session_ids is None:
+        return jsonify({"error": "session_ids required"}), 400
+
+    outputs = {}
+    now = time.time()
+
+    with sessions_lock:
+        for sid in session_ids:
+            if sid not in sessions:
+                continue
+            session = sessions[sid]
+            session["last_poll_time"] = now
+            buffer = session["output_buffer"]
+            output = "".join(buffer)
+            buffer.clear()
+            exited = session.get("exited", False)
+            outputs[sid] = {"output": output, "exited": exited}
+
+    return jsonify({"outputs": outputs})
 
 
 @app.route("/api/resize", methods=["POST"])
