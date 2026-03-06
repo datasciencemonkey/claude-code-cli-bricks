@@ -43,6 +43,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "opencode",   "label": "Configuring OpenCode CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -278,6 +279,16 @@ def run_setup():
 
     _run_step("micro", ["bash", "-c",
         "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
+    _run_step("gh", ["bash", "-c",
+        'GH_VERSION="2.74.1" && '
+        'mkdir -p ~/.local/bin && '
+        'curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz && '
+        'tar -xzf /tmp/gh.tar.gz -C /tmp && '
+        'mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && '
+        'rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_amd64 && '
+        'chmod +x ~/.local/bin/gh && '
+        # Configure gh to use git's credential protocol instead of its own
+        'gh config set git_protocol https 2>/dev/null || true'])
     # Use the currently running interpreter instead of assuming `python` exists in PATH.
     py = sys.executable or "python"
     _run_step("claude", [py, "setup_claude.py"])
