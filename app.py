@@ -314,11 +314,14 @@ def run_setup():
     _run_step("tmux", ["bash", "-c",
         'which tmux >/dev/null 2>&1 || ('
         'TMUX_VERSION="3.5a" && '
+        'mkdir -p ~/.local/bin ~/.local/lib/tmux-appdir && '
         'curl -fsSL "https://github.com/nelsonenzo/tmux-appimage/releases/download/${TMUX_VERSION}/tmux.appimage" -o /tmp/tmux.appimage && '
         'chmod +x /tmp/tmux.appimage && '
-        '/tmp/tmux.appimage --appimage-extract >/dev/null 2>&1 && '
-        'mv squashfs-root/usr/bin/tmux ~/.local/bin/tmux && '
-        'rm -rf /tmp/tmux.appimage squashfs-root'
+        'cd /tmp && /tmp/tmux.appimage --appimage-extract >/dev/null 2>&1 && '
+        'mv /tmp/squashfs-root/* ~/.local/lib/tmux-appdir/ && '
+        'printf \'#!/bin/bash\\nexec "$HOME/.local/lib/tmux-appdir/AppRun" "$@"\\n\' > ~/.local/bin/tmux && '
+        'chmod +x ~/.local/bin/tmux && '
+        'rm -rf /tmp/tmux.appimage /tmp/squashfs-root'
         ')'])
     _run_step("gh", ["bash", "-c",
         'GH_VERSION="2.74.1" && '
