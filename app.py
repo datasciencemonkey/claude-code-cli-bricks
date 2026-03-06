@@ -290,10 +290,12 @@ def run_setup():
         # Configure gh to use git's credential protocol instead of its own
         'gh config set git_protocol https 2>/dev/null || true && '
         # Wrap gh to auto-add flags that skip interactive prompts (arrow-key menus break in xterm.js PTY)
+        # The PTY sends OSC escape sequences that corrupt gh's interactive prompt library,
+        # so we pipe "Y" to answer the git-credential prompt non-interactively.
         'printf \'#!/bin/bash\\n'
         'if [ "$1" = "auth" ] && [ "$2" = "login" ]; then\\n'
         '    shift 2\\n'
-        '    exec ~/.local/bin/gh.real auth login -h github.com -p https -w "$@"\\n'
+        '    printf "Y\\\\n" | ~/.local/bin/gh.real auth login -h github.com -p https -w --skip-ssh-key "$@"\\n'
         'fi\\n'
         'exec ~/.local/bin/gh.real "$@"\\n\' > ~/.local/bin/gh.wrapper && '
         'mv ~/.local/bin/gh ~/.local/bin/gh.real && '
