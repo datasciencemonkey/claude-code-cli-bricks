@@ -22,9 +22,9 @@ Just use it all on Databricks, from the browser. Wired up to model serving endpo
 
 | Agent | Model | Description |
 |-------|-------|-------------|
-| 🟠 **Claude Code** | `databricks-claude-opus-4-6` | Anthropic's coding agent with 39 skills + 2 MCP servers (Claude Code) |
+| 🟠 **Claude Code** | `databricks-claude-sonnet-4-6` | Anthropic's coding agent with 39 skills + 2 MCP servers (Claude Code) |
 | 🔵 **Gemini CLI** | `databricks-gemini-3-1-pro` | Google's coding agent with shared skills |
-| 🟢 **OpenCode** | Configurable | Open-source coding agent with multi-provider support |
+| 🟢 **OpenCode** | Auto-discovered | Open-source coding agent with native Databricks provider (auto-discovers models) |
 
 Every agent starts **preconfigured to your Databricks AI Gateway endpoint** — models, auth tokens, and base URLs are all wired up at boot. No API keys to manage, no manual config.
 

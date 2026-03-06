@@ -1,8 +1,15 @@
 #!/usr/bin/env python
-"""Configure OpenCode CLI with Databricks Model Serving as an OpenAI-compatible provider."""
+"""Configure OpenCode CLI with native Databricks provider from fork.
+
+Installs from https://github.com/dgokeeffe/opencode (feat/databricks-ai-sdk-provider branch)
+which has built-in Databricks model serving support via @databricks/ai-sdk-provider.
+The native provider auto-discovers models from serving endpoints and handles auth
+through the full Databricks SDK credential chain (PAT, OAuth M2M, CLI, Azure, GCP).
+"""
 import os
 import json
 import subprocess
+import platform
 from pathlib import Path
 
 from utils import ensure_https, resolve_databricks_host_and_token
@@ -23,213 +30,134 @@ if not host or not token:
 # Strip trailing slash and ensure https:// prefix
 host = ensure_https(host.rstrip("/"))
 
-# Use DATABRICKS_GATEWAY_HOST if available (new AI Gateway), otherwise fall back to current gateway (DATABRICKS_HOST)
-gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
-gateway_token = token if gateway_host else ""
-if gateway_host and not gateway_token:
-    print("Warning: DATABRICKS_GATEWAY_HOST set but token unavailable, falling back to DATABRICKS_HOST")
-    gateway_host = ""
+FORK_REPO = "https://github.com/dgokeeffe/opencode.git"
+FORK_BRANCH = "feat/databricks-ai-sdk-provider"
 
-if gateway_host:
-    print(f"Using Databricks AI Gateway: {gateway_host}")
-else:
-    print(f"Using Databricks Host: {host}")
-
-# 1. Install OpenCode CLI into ~/.local/bin (same approach as Claude Code)
+# 1. Install OpenCode CLI from fork
 local_bin = home / ".local" / "bin"
 local_bin.mkdir(parents=True, exist_ok=True)
 opencode_bin = local_bin / "opencode"
 
 if not opencode_bin.exists():
-    print("Installing OpenCode CLI...")
-    # Use --prefix ~/.local so npm installs directly into ~/.local/bin (avoids EACCES on /usr/local)
+    print("Installing OpenCode CLI from Databricks fork...")
     npm_prefix = str(home / ".local")
+    build_dir = home / ".cache" / "opencode-build"
+    env = {**os.environ, "HOME": str(home)}
+
+    # Step 1: Install bun via npm
+    print("  Installing bun...")
     result = subprocess.run(
-        ["npm", "install", "-g", f"--prefix={npm_prefix}", "opencode-ai@latest"],
-        capture_output=True, text=True,
-        env={**os.environ, "HOME": str(home)}
+        ["npm", "install", "-g", f"--prefix={npm_prefix}", "bun"],
+        capture_output=True, text=True, env=env
     )
-    if result.returncode == 0:
-        print(f"OpenCode CLI installed to {opencode_bin}")
-    else:
-        print(f"OpenCode install failed: {result.stderr}")
+    if result.returncode != 0:
+        print(f"  bun install failed: {result.stderr}")
         raise SystemExit(1)
+
+    bun_bin = local_bin / "bun"
+    if not bun_bin.exists():
+        # bun might be in a different location
+        bun_candidates = list((home / ".local" / "lib").rglob("bun"))
+        if bun_candidates:
+            bun_bin = bun_candidates[0]
+        else:
+            print("  Error: bun binary not found after install")
+            raise SystemExit(1)
+    print(f"  bun installed: {bun_bin}")
+
+    # Step 2: Clone the fork
+    print(f"  Cloning {FORK_REPO} ({FORK_BRANCH})...")
+    if build_dir.exists():
+        subprocess.run(["rm", "-rf", str(build_dir)], check=True)
+    result = subprocess.run(
+        ["git", "clone", "--depth=1", f"--branch={FORK_BRANCH}", FORK_REPO, str(build_dir)],
+        capture_output=True, text=True, env=env
+    )
+    if result.returncode != 0:
+        print(f"  git clone failed: {result.stderr}")
+        raise SystemExit(1)
+
+    # Step 3: Install dependencies
+    print("  Installing dependencies (bun install)...")
+    # Ensure bun's directory is on PATH for child processes
+    bun_dir = str(bun_bin.parent)
+    install_env = {**env, "PATH": f"{bun_dir}:{env.get('PATH', '')}"}
+    result = subprocess.run(
+        [str(bun_bin), "install"],
+        capture_output=True, text=True,
+        cwd=str(build_dir), env=install_env
+    )
+    if result.returncode != 0:
+        print(f"  bun install failed: {result.stderr}")
+        raise SystemExit(1)
+
+    # Step 4: Build for current platform only
+    print("  Building OpenCode (single platform)...")
+    pkg_dir = build_dir / "packages" / "opencode"
+    # Ensure bun's directory is on PATH so child processes can find it
+    bun_dir = str(bun_bin.parent)
+    build_env = {**env, "PATH": f"{bun_dir}:{env.get('PATH', '')}"}
+    result = subprocess.run(
+        [str(bun_bin), "run", "build", "--", "--single"],
+        capture_output=True, text=True,
+        cwd=str(pkg_dir), env=build_env,
+        timeout=180
+    )
+    if result.returncode != 0:
+        print(f"  Build failed: {result.stderr}")
+        print(f"  Build stdout: {result.stdout}")
+        raise SystemExit(1)
+
+    # Step 5: Find and copy the built binary
+    # Build output: dist/@opencode-ai/script-{os}-{arch}/bin/opencode
+    os_name = "linux" if platform.system() == "Linux" else "darwin"
+    arch_name = "arm64" if platform.machine() in ("aarch64", "arm64") else "x64"
+    dist_dir = pkg_dir / "dist"
+
+    # Find the binary - try exact match first, then glob
+    expected_bin = dist_dir / f"@opencode-ai/script-{os_name}-{arch_name}" / "bin" / "opencode"
+    if not expected_bin.exists():
+        # Try to find any built binary
+        candidates = list(dist_dir.rglob("bin/opencode"))
+        if candidates:
+            expected_bin = candidates[0]
+        else:
+            print(f"  Error: built binary not found in {dist_dir}")
+            print(f"  Contents: {list(dist_dir.iterdir()) if dist_dir.exists() else 'dist dir missing'}")
+            raise SystemExit(1)
+
+    # Copy binary to ~/.local/bin
+    import shutil
+    shutil.copy2(str(expected_bin), str(opencode_bin))
+    opencode_bin.chmod(0o755)
+    print(f"  OpenCode CLI installed to {opencode_bin}")
+
+    # Clean up build directory to save space
+    print("  Cleaning up build directory...")
+    subprocess.run(["rm", "-rf", str(build_dir)], check=True)
 else:
     print(f"OpenCode CLI already installed at {opencode_bin}")
 
-# 2. Write global opencode.json config
-# OpenCode looks for config at ~/.config/opencode/opencode.json (global)
-# and ./opencode.json (project-level)
+# 2. Write minimal opencode.json config
+# The fork's native Databricks provider auto-discovers models from serving endpoints
+# and handles auth via DATABRICKS_TOKEN env var / ~/.databrickscfg / SDK credential chain.
+# We just need to enable the provider and set a default model.
 opencode_config_dir = home / ".config" / "opencode"
 opencode_config_dir.mkdir(parents=True, exist_ok=True)
 
-if gateway_host:
-    # Gateway mode: separate providers for different API protocols
-    # SDK auto-appends /chat/completions and /responses to baseURL
-    # - Anthropic/Gemini models: baseURL={gateway}/mlflow/v1 → /mlflow/v1/chat/completions
-    # - OpenAI/GPT models: baseURL={gateway}/openai/v1 → /openai/v1/responses
-    opencode_config = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            "databricks": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Databricks AI Gateway (MLflow)",
-                "options": {
-                    "baseURL": f"{gateway_host}/mlflow/v1",
-                    "apiKey": "{env:DATABRICKS_TOKEN}"
-                },
-                "models": {
-                    "databricks-claude-opus-4-6": {
-                        "name": "Claude Opus 4.6 (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 16384
-                        }
-                    },
-                    "databricks-claude-sonnet-4-6": {
-                        "name": "Claude Sonnet 4.6 (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-2-5-flash": {
-                        "name": "Gemini 2.5 Flash (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-2-5-pro": {
-                        "name": "Gemini 2.5 Pro (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-3-1-pro": {
-                        "name": "Gemini 3.1 Pro (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                }
-            },
-            "databricks-openai": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Databricks AI Gateway (OpenAI)",
-                "options": {
-                    "baseURL": f"{gateway_host}/openai/v1",
-                    "apiKey": "{env:DATABRICKS_TOKEN}"
-                },
-                "models": {
-                    "databricks-gpt-5-2-codex": {
-                        "name": "GPT 5.2 Codex (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 16384
-                        }
-                    },
-                    "databricks-gpt-5-1-codex-max": {
-                        "name": "GPT 5.1 Codex Max (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 16384
-                        }
-                    }
-                }
-            }
-        },
-        "model": f"databricks/{anthropic_model}"
-    }
-else:
-    # Fallback: current gateway using DATABRICKS_HOST /serving-endpoints (OpenAI-compatible)
-    opencode_config = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            "databricks": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Databricks Model Serving",
-                "options": {
-                    "baseURL": f"{host}/serving-endpoints",
-                    "apiKey": "{env:DATABRICKS_TOKEN}"
-                },
-                "models": {
-                    "databricks-claude-opus-4-6": {
-                        "name": "Claude Opus 4.6 (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 16384
-                        }
-                    },
-                    "databricks-claude-sonnet-4-6": {
-                        "name": "Claude Sonnet 4.6 (Databricks)",
-                        "limit": {
-                            "context": 200000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-2-5-flash": {
-                        "name": "Gemini 2.5 Flash (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-2-5-pro": {
-                        "name": "Gemini 2.5 Pro (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                    "databricks-gemini-3-1-pro": {
-                        "name": "Gemini 3.1 Pro (Databricks)",
-                        "limit": {
-                            "context": 1000000,
-                            "output": 8192
-                        }
-                    },
-                }
-            }
-        },
-        "model": f"databricks/{anthropic_model}"
-    }
+opencode_config = {
+    "$schema": "https://opencode.ai/config.json",
+    "enabled_providers": ["databricks"],
+    "model": f"databricks/{anthropic_model}"
+}
 
 config_path = opencode_config_dir / "opencode.json"
 config_path.write_text(json.dumps(opencode_config, indent=2))
 print(f"OpenCode configured: {config_path}")
-
-# 3. Also create auth credentials for the databricks provider(s)
-# OpenCode stores credentials at ~/.local/share/opencode/auth.json
-opencode_data_dir = home / ".local" / "share" / "opencode"
-opencode_data_dir.mkdir(parents=True, exist_ok=True)
-
-if gateway_host:
-    auth_data = {
-        "databricks": {
-            "api_key": gateway_token
-        },
-        "databricks-openai": {
-            "api_key": gateway_token
-        }
-    }
-else:
-    auth_data = {
-        "databricks": {
-            "api_key": token
-        }
-    }
-
-auth_path = opencode_data_dir / "auth.json"
-auth_path.write_text(json.dumps(auth_data, indent=2))
-auth_path.chmod(0o600)
-print(f"OpenCode auth configured: {auth_path}")
+print(f"  Provider: databricks (native, auto-discovers models)")
+print(f"  Default model: databricks/{anthropic_model}")
 
 print(f"\nOpenCode ready! Default model: {anthropic_model}")
 print("  opencode                          # Start OpenCode TUI")
-if gateway_host:
-    print("  opencode -m databricks-openai/databricks-gpt-5-2-codex  # Use GPT 5.2 Codex")
-print("  opencode -m databricks/databricks-gemini-2-5-flash  # Use Gemini")
-print(f"  opencode -m databricks/{anthropic_model} # Use Claude (default)")
+print("  opencode -m databricks/<model>    # Use a specific model")
+print("  (Models auto-discovered from serving endpoints)")
