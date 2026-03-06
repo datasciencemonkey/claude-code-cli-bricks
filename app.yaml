@@ -1,6 +1,8 @@
 command:
   - gunicorn
   - app:app
+compute:
+  size: Large
 env:
   - name: HOME
     value: /app/python/source_code
@@ -9,7 +11,7 @@ env:
   - name: DATABRICKS_TOKEN
     valueFrom: DATABRICKS_TOKEN
   - name: ANTHROPIC_MODEL
-    value: databricks-claude-opus-4-6
+    value: databricks-claude-sonnet-4-6
   - name: GEMINI_MODEL
     value: databricks-gemini-3-1-pro
   - name: CODEX_MODEL

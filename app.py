@@ -19,7 +19,7 @@ from collections import deque
 from utils import ensure_https, resolve_auth, AuthMode, TokenRefresher
 
 # Session timeout configuration
-SESSION_TIMEOUT_SECONDS = 60        # No poll for 60s = dead session
+SESSION_TIMEOUT_SECONDS = 120       # No poll for 120s = dead PTY wrapper (tmux persists)
 CLEANUP_INTERVAL_SECONDS = 30       # How often to check for stale sessions
 GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
 
@@ -526,6 +526,32 @@ def health():
     })
 
 
+@app.route("/api/tmux-sessions")
+def list_tmux_sessions():
+    """List active tmux sessions for reconnection after page refresh."""
+    if not shutil.which("tmux"):
+        return jsonify({"sessions": []})
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return jsonify({"sessions": []})
+        sessions_list = [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
+        # Extract pane IDs from session names like "pane-0", "pane-1"
+        pane_ids = []
+        for name in sessions_list:
+            if name.startswith("pane-"):
+                try:
+                    pane_ids.append(int(name.split("-", 1)[1]))
+                except ValueError:
+                    pass
+        return jsonify({"sessions": sorted(pane_ids)})
+    except Exception:
+        return jsonify({"sessions": []})
+
+
 @app.route("/api/session", methods=["POST"])
 def create_session():
     """Create a new terminal session."""
@@ -555,7 +581,14 @@ def create_session():
         # Use tmux for session persistence across page refreshes.
         # tmux new-session -A: attach if session exists, create if not.
         tmux_session = f"pane-{pane_id}"
+        reattached = False
         if shutil.which("tmux"):
+            # Check if this tmux session already exists (reattach vs new)
+            check = subprocess.run(
+                ["tmux", "has-session", "-t", tmux_session],
+                capture_output=True, timeout=5
+            )
+            reattached = check.returncode == 0
             shell_cmd = ["tmux", "new-session", "-A", "-s", tmux_session]
         else:
             shell_cmd = ["/bin/bash", "--login"]
@@ -585,7 +618,7 @@ def create_session():
         thread = threading.Thread(target=read_pty_output, args=(session_id, master_fd), daemon=True)
         thread.start()
 
-        return jsonify({"session_id": session_id})
+        return jsonify({"session_id": session_id, "reattached": reattached})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

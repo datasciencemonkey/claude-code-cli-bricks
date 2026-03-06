@@ -1,6 +1,8 @@
 command:
   - gunicorn
   - app:app
+compute:
+  size: Large
 env:
   - name: HOME
     value: /app/python/source_code
