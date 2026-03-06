@@ -7,7 +7,7 @@ env:
   - name: DATABRICKS_TOKEN
     valueFrom: DATABRICKS_TOKEN
   - name: ANTHROPIC_MODEL
-    value: databricks-claude-opus-4-6
+    value: databricks-claude-sonnet-4-6
   - name: GEMINI_MODEL
     value: databricks-gemini-3-1-pro
   #OPTIONAL: Use the new Databricks AI Gateway if you have access (recommended), otherwise it will default to the older endpoint
@@ -18,3 +18,16 @@ env:
   # completes the rollout and auto memory is on by default, this can be removed entirely.
   - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY
     value: 0
+  #OPTIONAL: Git credentials for enterprise source control (GitHub, Azure DevOps, GitLab)
+  # GIT_TOKEN is used for HTTPS git auth. If GIT_TOKEN_HOST is set, it only applies to
+  # matching hosts; otherwise it applies to all git operations.
+  # - name: GIT_TOKEN
+  #   valueFrom: GIT_TOKEN
+  # - name: GIT_TOKEN_HOST
+  #   value: github.com
+  #OPTIONAL: Comma-separated list of repos to auto-clone into ~/projects/ at startup
+  # - name: GIT_REPOS
+  #   value: https://github.com/org/repo1.git,https://github.com/org/repo2.git
+  #OPTIONAL: Set to "true" to sync commits to Databricks Workspace files (default: disabled)
+  # - name: WORKSPACE_SYNC
+  #   value: "true"

@@ -14,7 +14,25 @@ import stat
 import subprocess
 import tempfile
 import textwrap
+from unittest.mock import patch, MagicMock
 import pytest
+
+
+def _mock_setup_git_config(tmp_path, monkeypatch):
+    """Call _setup_git_config with WorkspaceClient mocked out."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token")
+
+    mock_me = MagicMock()
+    mock_me.user_name = "test@example.com"
+    mock_me.display_name = "Test User"
+    mock_client = MagicMock()
+    mock_client.current_user.me.return_value = mock_me
+
+    with patch("databricks.sdk.WorkspaceClient", return_value=mock_client):
+        from app import _setup_git_config
+        _setup_git_config()
 
 
 class TestCredentialHelperSetup:
@@ -22,41 +40,22 @@ class TestCredentialHelperSetup:
 
     def test_setup_git_config_creates_credential_helper(self, tmp_path, monkeypatch):
         """_setup_git_config creates the git-credential-databricks script."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
-        monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token")
-
-        from app import _setup_git_config
-        _setup_git_config()
-
+        _mock_setup_git_config(tmp_path, monkeypatch)
         helper_path = tmp_path / ".local" / "bin" / "git-credential-databricks"
         assert helper_path.exists(), f"Credential helper not found at {helper_path}"
 
     def test_credential_helper_is_executable(self, tmp_path, monkeypatch):
         """The credential helper script has executable permissions."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
-        monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token")
-
-        from app import _setup_git_config
-        _setup_git_config()
-
+        _mock_setup_git_config(tmp_path, monkeypatch)
         helper_path = tmp_path / ".local" / "bin" / "git-credential-databricks"
         file_stat = os.stat(helper_path)
         assert file_stat.st_mode & stat.S_IXUSR, "Script is not executable by owner"
 
     def test_gitconfig_references_credential_helper(self, tmp_path, monkeypatch):
         """~/.gitconfig contains [credential] section pointing to the helper."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
-        monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token")
-
-        from app import _setup_git_config
-        _setup_git_config()
-
+        _mock_setup_git_config(tmp_path, monkeypatch)
         gitconfig_path = tmp_path / ".gitconfig"
         content = gitconfig_path.read_text()
-
         assert "[credential]" in content, "Missing [credential] section in .gitconfig"
         assert "git-credential-databricks" in content, (
             "Missing helper reference in .gitconfig"
@@ -64,16 +63,9 @@ class TestCredentialHelperSetup:
 
     def test_credential_helper_reads_token_from_env(self, tmp_path, monkeypatch):
         """The helper script references DATABRICKS_TOKEN env var (not hardcoded)."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
-        monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token")
-
-        from app import _setup_git_config
-        _setup_git_config()
-
+        _mock_setup_git_config(tmp_path, monkeypatch)
         helper_path = tmp_path / ".local" / "bin" / "git-credential-databricks"
         script_content = helper_path.read_text()
-
         assert "DATABRICKS_TOKEN" in script_content, (
             "Script should read DATABRICKS_TOKEN from environment, not hardcode it"
         )
@@ -85,13 +77,8 @@ class TestCredentialHelperProtocol:
     @pytest.fixture
     def helper_script(self, tmp_path, monkeypatch):
         """Set up the credential helper and return its path."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("DATABRICKS_HOST", "https://test.databricks.com")
         monkeypatch.setenv("DATABRICKS_TOKEN", "dapi_test_token_secret")
-
-        from app import _setup_git_config
-        _setup_git_config()
-
+        _mock_setup_git_config(tmp_path, monkeypatch)
         return tmp_path / ".local" / "bin" / "git-credential-databricks"
 
     def test_get_returns_username_and_password(self, helper_script):
@@ -153,6 +140,49 @@ class TestCredentialHelperProtocol:
         )
         assert result.returncode == 0
         assert result.stdout.strip() == ""
+
+    def test_git_token_preferred_for_matching_host(self, helper_script):
+        """GIT_TOKEN is used when GIT_TOKEN_HOST matches the requested host."""
+        result = subprocess.run(
+            [str(helper_script), "get"],
+            input="protocol=https\nhost=github.com\n\n",
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GIT_TOKEN": "ghp_enterprise", "GIT_TOKEN_HOST": "github.com",
+                 "DATABRICKS_TOKEN": "dapi_fallback"},
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "password=ghp_enterprise" in result.stdout
+
+    def test_git_token_not_used_for_non_matching_host(self, helper_script):
+        """GIT_TOKEN is skipped when host doesn't match GIT_TOKEN_HOST; falls back to DATABRICKS_TOKEN."""
+        result = subprocess.run(
+            [str(helper_script), "get"],
+            input="protocol=https\nhost=dev.azure.com\n\n",
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GIT_TOKEN": "ghp_enterprise", "GIT_TOKEN_HOST": "github.com",
+                 "DATABRICKS_TOKEN": "dapi_fallback"},
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "password=dapi_fallback" in result.stdout
+
+    def test_git_token_without_host_filter_applies_to_all(self, helper_script):
+        """GIT_TOKEN without GIT_TOKEN_HOST applies to all hosts."""
+        for host in ["github.com", "gitlab.com", "dev.azure.com"]:
+            result = subprocess.run(
+                [str(helper_script), "get"],
+                input=f"protocol=https\nhost={host}\n\n",
+                capture_output=True,
+                text=True,
+                env={**os.environ, "GIT_TOKEN": "ghp_universal",
+                     "DATABRICKS_TOKEN": "dapi_should_not_use"},
+                timeout=5,
+            )
+            assert result.returncode == 0
+            assert "password=ghp_universal" in result.stdout, f"Failed for {host}"
 
     def test_get_with_no_token_fails_gracefully(self, helper_script):
         """If DATABRICKS_TOKEN is unset, 'get' exits non-zero or returns empty."""

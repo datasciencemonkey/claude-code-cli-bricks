@@ -48,6 +48,7 @@ setup_state = {
         {"id": "opencode",   "label": "Configuring OpenCode CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "gemini",     "label": "Configuring Gemini CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "databricks", "label": "Setting up Databricks CLI",    "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "git_clone",  "label": "Cloning git repositories",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
     ]
 }
 
@@ -119,26 +120,41 @@ def _setup_git_config():
     credential_helper_path = os.path.join(local_bin, "git-credential-databricks")
     with open(credential_helper_path, "w") as f:
         f.write('#!/bin/bash\n')
-        f.write('# Git credential helper that uses DATABRICKS_TOKEN for HTTPS auth.\n')
+        f.write('# Git credential helper: host-aware, supports both enterprise git and Databricks.\n')
         f.write('# Implements the git credential helper protocol.\n')
+        f.write('#\n')
+        f.write('# GIT_TOKEN + GIT_TOKEN_HOST → used for matching hosts (GitHub, Azure DevOps, GitLab)\n')
+        f.write('# DATABRICKS_TOKEN → fallback for Databricks-hosted git and other hosts\n')
         f.write('\n')
         f.write('# Only respond to "get" action; silently ignore store/erase.\n')
         f.write('if [ "$1" != "get" ]; then\n')
         f.write('    exit 0\n')
         f.write('fi\n')
         f.write('\n')
-        f.write('# Read stdin (protocol, host, etc.) -- required by protocol but we\n')
-        f.write('# serve credentials for all hosts.\n')
+        f.write('# Read stdin to extract the host being requested.\n')
+        f.write('REQ_HOST=""\n')
         f.write('while IFS= read -r line; do\n')
         f.write('    [ -z "$line" ] && break\n')
+        f.write('    case "$line" in\n')
+        f.write('        host=*) REQ_HOST="${line#host=}" ;;\n')
+        f.write('    esac\n')
         f.write('done\n')
         f.write('\n')
-        f.write('# If DATABRICKS_TOKEN is not set, exit non-zero so git tries other helpers.\n')
-        f.write('if [ -z "$DATABRICKS_TOKEN" ]; then\n')
-        f.write('    exit 1\n')
+        f.write('# If GIT_TOKEN is set, use it for matching hosts (or all hosts if GIT_TOKEN_HOST is unset).\n')
+        f.write('if [ -n "$GIT_TOKEN" ]; then\n')
+        f.write('    if [ -z "$GIT_TOKEN_HOST" ] || echo "$REQ_HOST" | grep -qi "$GIT_TOKEN_HOST"; then\n')
+        f.write('        printf "username=token\\npassword=%s\\n" "$GIT_TOKEN"\n')
+        f.write('        exit 0\n')
+        f.write('    fi\n')
         f.write('fi\n')
         f.write('\n')
-        f.write('printf "username=token\\npassword=%s\\n" "$DATABRICKS_TOKEN"\n')
+        f.write('# Fallback to DATABRICKS_TOKEN for Databricks-hosted git and other hosts.\n')
+        f.write('if [ -n "$DATABRICKS_TOKEN" ]; then\n')
+        f.write('    printf "username=token\\npassword=%s\\n" "$DATABRICKS_TOKEN"\n')
+        f.write('    exit 0\n')
+        f.write('fi\n')
+        f.write('\n')
+        f.write('exit 1\n')
     os.chmod(credential_helper_path, 0o755)
     logger.info(f"Git credential helper written to {credential_helper_path}")
 
@@ -156,45 +172,95 @@ def _setup_git_config():
         f.write("\n".join(lines) + "\n")
     logger.info(f"Git config written to {gitconfig_path}")
 
-    # Write post-commit hook for workspace sync (works from any CLI: Claude, Gemini, OpenCode, etc.)
-    # Only syncs repos inside ~/projects/ — skips the app source and any other repos
+    # Post-commit hook: workspace sync (opt-in) or just a placeholder
     post_commit = os.path.join(hooks_dir, "post-commit")
+    workspace_sync = os.environ.get("WORKSPACE_SYNC", "").lower() in ("1", "true", "yes")
+
     with open(post_commit, "w") as f:
         f.write('#!/bin/bash\n')
-        f.write('# Auto-sync to Databricks Workspace on commit (works from any CLI)\n')
-        f.write('SYNC_LOG="$HOME/.sync.log"\n')
-        f.write('\n')
-        f.write('# Resolve git repo root (handles commits from subdirectories)\n')
-        f.write('REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n')
-        f.write('if [ -z "$REPO_ROOT" ]; then\n')
-        f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: not inside a git repo" >> "$SYNC_LOG"\n')
-        f.write('    exit 0\n')
-        f.write('fi\n')
-        f.write('\n')
-        f.write('# Only sync repos inside ~/projects/\n')
-        f.write('PROJECTS_DIR="$HOME/projects"\n')
-        f.write('case "$REPO_ROOT" in\n')
-        f.write('    "$PROJECTS_DIR"/*)\n')
-        f.write('        ;; # allowed - continue\n')
-        f.write('    *)\n')
-        f.write('        echo "[post-commit] $(date +%H:%M:%S) SKIP: $REPO_ROOT is outside $PROJECTS_DIR" >> "$SYNC_LOG"\n')
-        f.write('        exit 0\n')
-        f.write('        ;;\n')
-        f.write('esac\n')
-        f.write('\n')
-        f.write('echo "[post-commit] $(date +%H:%M:%S) syncing $REPO_ROOT" >> "$SYNC_LOG"\n')
-        f.write('\n')
-        f.write('# Use venv python directly (avoids fragile source activate)\n')
-        f.write('VENV_PYTHON="/app/python/source_code/.venv/bin/python"\n')
-        f.write('SYNC_SCRIPT="/app/python/source_code/sync_to_workspace.py"\n')
-        f.write('\n')
-        f.write('if [ -x "$VENV_PYTHON" ] && [ -f "$SYNC_SCRIPT" ]; then\n')
-        f.write('    nohup "$VENV_PYTHON" "$SYNC_SCRIPT" "$REPO_ROOT" >> "$SYNC_LOG" 2>&1 & disown\n')
-        f.write('else\n')
-        f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: venv=$VENV_PYTHON script=$SYNC_SCRIPT" >> "$SYNC_LOG"\n')
-        f.write('fi\n')
+        if workspace_sync:
+            f.write('# Auto-sync to Databricks Workspace on commit (WORKSPACE_SYNC=true)\n')
+            f.write('SYNC_LOG="$HOME/.sync.log"\n')
+            f.write('\n')
+            f.write('REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n')
+            f.write('if [ -z "$REPO_ROOT" ]; then\n')
+            f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: not inside a git repo" >> "$SYNC_LOG"\n')
+            f.write('    exit 0\n')
+            f.write('fi\n')
+            f.write('\n')
+            f.write('PROJECTS_DIR="$HOME/projects"\n')
+            f.write('case "$REPO_ROOT" in\n')
+            f.write('    "$PROJECTS_DIR"/*)\n')
+            f.write('        ;; # allowed - continue\n')
+            f.write('    *)\n')
+            f.write('        echo "[post-commit] $(date +%H:%M:%S) SKIP: $REPO_ROOT is outside $PROJECTS_DIR" >> "$SYNC_LOG"\n')
+            f.write('        exit 0\n')
+            f.write('        ;;\n')
+            f.write('esac\n')
+            f.write('\n')
+            f.write('echo "[post-commit] $(date +%H:%M:%S) syncing $REPO_ROOT" >> "$SYNC_LOG"\n')
+            f.write('\n')
+            f.write('VENV_PYTHON="/app/python/source_code/.venv/bin/python"\n')
+            f.write('SYNC_SCRIPT="/app/python/source_code/sync_to_workspace.py"\n')
+            f.write('\n')
+            f.write('if [ -x "$VENV_PYTHON" ] && [ -f "$SYNC_SCRIPT" ]; then\n')
+            f.write('    nohup "$VENV_PYTHON" "$SYNC_SCRIPT" "$REPO_ROOT" >> "$SYNC_LOG" 2>&1 & disown\n')
+            f.write('else\n')
+            f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: venv=$VENV_PYTHON script=$SYNC_SCRIPT" >> "$SYNC_LOG"\n')
+            f.write('fi\n')
+        else:
+            f.write('# Workspace sync disabled (set WORKSPACE_SYNC=true to enable)\n')
+            f.write('exit 0\n')
     os.chmod(post_commit, 0o755)
     logger.info(f"Post-commit hook written to {post_commit}")
+
+
+def _clone_git_repos():
+    """Clone repos listed in GIT_REPOS env var into ~/projects/."""
+    git_repos = os.environ.get("GIT_REPOS", "").strip()
+    if not git_repos:
+        _update_step("git_clone", status="complete", completed_at=time.time())
+        return
+
+    _update_step("git_clone", status="running", started_at=time.time())
+    home = os.environ.get("HOME", "/app/python/source_code")
+    projects_dir = os.path.join(home, "projects")
+    os.makedirs(projects_dir, exist_ok=True)
+
+    repos = [r.strip() for r in git_repos.split(",") if r.strip()]
+    errors = []
+
+    for repo_url in repos:
+        # Derive folder name from URL: https://github.com/org/repo.git → repo
+        repo_name = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        target_dir = os.path.join(projects_dir, repo_name)
+
+        if os.path.isdir(target_dir):
+            logger.info(f"Repo already exists, skipping: {target_dir}")
+            continue
+
+        logger.info(f"Cloning {repo_url} into {target_dir}")
+        try:
+            result = subprocess.run(
+                ["git", "clone", repo_url, target_dir],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode != 0:
+                err = result.stderr.strip() or "clone failed"
+                errors.append(f"{repo_name}: {err}")
+                logger.error(f"Failed to clone {repo_url}: {err}")
+            else:
+                logger.info(f"Cloned {repo_url}")
+        except subprocess.TimeoutExpired:
+            errors.append(f"{repo_name}: timed out after 120s")
+        except Exception as e:
+            errors.append(f"{repo_name}: {e}")
+
+    if errors:
+        _update_step("git_clone", status="error", completed_at=time.time(),
+                      error="; ".join(errors)[:500])
+    else:
+        _update_step("git_clone", status="complete", completed_at=time.time())
 
 
 def run_setup():
@@ -219,6 +285,9 @@ def run_setup():
     _run_step("opencode", [py, "setup_opencode.py"])
     _run_step("gemini", [py, "setup_gemini.py"])
     _run_step("databricks", [py, "setup_databricks.py"])
+
+    # Clone git repos specified in GIT_REPOS env var
+    _clone_git_repos()
 
     with setup_lock:
         any_error = any(s["status"] == "error" for s in setup_state["steps"])
