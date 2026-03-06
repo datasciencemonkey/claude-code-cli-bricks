@@ -288,7 +288,17 @@ def run_setup():
         'rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_amd64 && '
         'chmod +x ~/.local/bin/gh && '
         # Configure gh to use git's credential protocol instead of its own
-        'gh config set git_protocol https 2>/dev/null || true'])
+        'gh config set git_protocol https 2>/dev/null || true && '
+        # Wrap gh to auto-add flags that skip interactive prompts (arrow-key menus break in xterm.js PTY)
+        'printf \'#!/bin/bash\\n'
+        'if [ "$1" = "auth" ] && [ "$2" = "login" ]; then\\n'
+        '    shift 2\\n'
+        '    exec ~/.local/bin/gh.real auth login -h github.com -p https -w "$@"\\n'
+        'fi\\n'
+        'exec ~/.local/bin/gh.real "$@"\\n\' > ~/.local/bin/gh.wrapper && '
+        'mv ~/.local/bin/gh ~/.local/bin/gh.real && '
+        'mv ~/.local/bin/gh.wrapper ~/.local/bin/gh && '
+        'chmod +x ~/.local/bin/gh'])
     # Use the currently running interpreter instead of assuming `python` exists in PATH.
     py = sys.executable or "python"
     _run_step("claude", [py, "setup_claude.py"])

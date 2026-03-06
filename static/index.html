@@ -234,7 +234,7 @@
 
         // Greeting
         this.term.write('\x1b[32mConnected. Type "claude" to start coding.\x1b[0m\r\n');
-        this.term.write('\x1b[90mProjects in ~/projects auto-sync to Workspace on git commit.\x1b[0m\r\n\r\n');
+        this.term.write('\x1b[90mRun "gh auth login" to connect GitHub, then clone your repos into ~/projects.\x1b[0m\r\n\r\n');
 
         // Input handler
         this.term.onData(input => {
