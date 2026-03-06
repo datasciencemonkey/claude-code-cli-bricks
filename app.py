@@ -215,6 +215,24 @@ def _setup_git_config():
     os.chmod(post_commit, 0o755)
     logger.info(f"Post-commit hook written to {post_commit}")
 
+    # Write ~/.bashrc with colored prompt and aliases
+    bashrc_path = os.path.join(home, ".bashrc")
+    with open(bashrc_path, "w") as f:
+        f.write('# Colored prompt: user@host:dir$\n')
+        f.write('PS1=\'\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ \'\n')
+        f.write('\n')
+        f.write('# Color support\n')
+        f.write('alias ls="ls --color=auto"\n')
+        f.write('alias grep="grep --color=auto"\n')
+        f.write('export CLICOLOR=1\n')
+    logger.info(f"Bashrc written to {bashrc_path}")
+
+    # Ensure login shells source .bashrc
+    bash_profile_path = os.path.join(home, ".bash_profile")
+    with open(bash_profile_path, "w") as f:
+        f.write('# Source .bashrc for login shells\n')
+        f.write('[ -f ~/.bashrc ] && . ~/.bashrc\n')
+
 
 def _clone_git_repos():
     """Clone repos listed in GIT_REPOS env var into ~/projects/."""
@@ -519,7 +537,7 @@ def create_session():
         os.makedirs(projects_dir, exist_ok=True)
 
         pid = subprocess.Popen(
-            ["/bin/bash"],
+            ["/bin/bash", "--login"],
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
