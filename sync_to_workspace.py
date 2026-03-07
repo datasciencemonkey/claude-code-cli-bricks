@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Sync a project directory to Databricks Workspace."""
-import os
+
 import sys
 import subprocess
 from pathlib import Path
@@ -12,7 +12,7 @@ except ImportError:
     error_log = Path.home() / ".sync-errors.log"
     with open(error_log, "a") as f:
         f.write(f"databricks-sdk not installed for {sys.executable}\n")
-    print(f"⚠ databricks-sdk not available", file=sys.stderr)
+    print("⚠ databricks-sdk not available", file=sys.stderr)
     sys.exit(0)
 
 
@@ -53,7 +53,7 @@ def sync_project(project_path: Path):
         error_log = Path.home() / ".sync-errors.log"
         with open(error_log, "a") as f:
             f.write(f"{project_path}: {e}\n")
-        print(f"⚠ Sync failed (logged to ~/.sync-errors.log)", file=sys.stderr)
+        print("⚠ Sync failed (logged to ~/.sync-errors.log)", file=sys.stderr)
 
 
 if __name__ == "__main__":

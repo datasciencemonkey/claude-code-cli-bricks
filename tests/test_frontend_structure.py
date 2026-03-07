@@ -10,8 +10,7 @@ import re
 import pytest
 
 INDEX_HTML_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "static", "index.html"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "index.html"
 )
 
 
@@ -55,12 +54,6 @@ class TestToolbar:
     def test_layout_buttons_exist(self, html_source):
         """Buttons or controls for switching layouts are present."""
         # Should have clickable elements for each layout
-        layout_button_patterns = [
-            r'single.*?(?:button|btn|click)',
-            r'hsplit.*?(?:button|btn|click)',
-            r'vsplit.*?(?:button|btn|click)',
-            r'quad.*?(?:button|btn|click)',
-        ]
         # At minimum, all 4 layout names should appear near interactive elements
         for layout in ["single", "hsplit", "vsplit", "quad"]:
             count = html_source.lower().count(layout)
@@ -71,9 +64,11 @@ class TestToolbar:
 
     def test_dark_theme_toolbar(self, html_source):
         """Toolbar uses the dark theme (#1e1e1e or similar dark background)."""
-        assert "#1e1e1e" in html_source or "#252525" in html_source or "#2d2d2d" in html_source, (
-            "Toolbar does not use dark theme colors"
-        )
+        assert (
+            "#1e1e1e" in html_source
+            or "#252525" in html_source
+            or "#2d2d2d" in html_source
+        ), "Toolbar does not use dark theme colors"
 
 
 class TestPaneLifecycle:
@@ -83,7 +78,11 @@ class TestPaneLifecycle:
         """Code creates sessions via /api/session for each pane."""
         assert "/api/session" in html_source, "No /api/session call found"
         # Should create session as part of pane initialization
-        assert "createSession" in html_source or "create_session" in html_source or "api/session" in html_source
+        assert (
+            "createSession" in html_source
+            or "create_session" in html_source
+            or "api/session" in html_source
+        )
 
     def test_session_close_on_pane_removal(self, html_source):
         """Code calls /api/session/close when a pane is closed."""
@@ -97,9 +96,11 @@ class TestPaneLifecycle:
 
     def test_pane_class_or_constructor(self, html_source):
         """A TerminalPane class or equivalent constructor exists."""
-        assert "TerminalPane" in html_source or "terminalPane" in html_source or "createPane" in html_source, (
-            "No TerminalPane class or pane constructor found"
-        )
+        assert (
+            "TerminalPane" in html_source
+            or "terminalPane" in html_source
+            or "createPane" in html_source
+        ), "No TerminalPane class or pane constructor found"
 
 
 class TestIndependentResize:
@@ -118,16 +119,15 @@ class TestIndependentResize:
     def test_resize_debounce(self, html_source):
         """Resize events are debounced (setTimeout or debounce pattern)."""
         # Look for debounce implementation
-        has_debounce = (
-            "debounce" in html_source.lower() or
-            ("setTimeout" in html_source and "resize" in html_source.lower())
+        has_debounce = "debounce" in html_source.lower() or (
+            "setTimeout" in html_source and "resize" in html_source.lower()
         )
         assert has_debounce, "No resize debounce mechanism found"
 
     def test_debounce_delay_at_least_150ms(self, html_source):
         """Debounce delay is at least 150ms."""
         # Find numbers near resize/debounce context
-        delays = re.findall(r'(\d+)', html_source)
+        delays = re.findall(r"(\d+)", html_source)
         # 150 or higher should appear somewhere in debounce context
         assert any(int(d) >= 150 for d in delays if d.isdigit() and int(d) < 5000), (
             "No debounce delay >= 150ms found"
@@ -140,9 +140,9 @@ class TestFocusManagement:
     def test_focus_visual_indicator(self, html_source):
         """Focused pane has a visual border or highlight."""
         has_focus_style = (
-            "focused" in html_source.lower() or
-            "active-pane" in html_source or
-            "focus" in html_source.lower()
+            "focused" in html_source.lower()
+            or "active-pane" in html_source
+            or "focus" in html_source.lower()
         )
         assert has_focus_style, "No focus visual indicator found"
 
@@ -150,19 +150,23 @@ class TestFocusManagement:
         """Ctrl+Shift+N keyboard shortcut is handled."""
         # Should check for keydown handler with Ctrl+Shift+N
         has_shortcut = (
-            "ctrlKey" in html_source and
-            "shiftKey" in html_source and
-            ("KeyN" in html_source or "key === 'N'" in html_source or
-             "key ===\"N\"" in html_source or "keyCode" in html_source or
-             "'n'" in html_source or "'N'" in html_source)
+            "ctrlKey" in html_source
+            and "shiftKey" in html_source
+            and (
+                "KeyN" in html_source
+                or "key === 'N'" in html_source
+                or 'key ==="N"' in html_source
+                or "keyCode" in html_source
+                or "'n'" in html_source
+                or "'N'" in html_source
+            )
         )
         assert has_shortcut, "No Ctrl+Shift+N keyboard shortcut handler found"
 
     def test_click_to_focus(self, html_source):
         """Click handler on panes sets focus."""
         has_click_focus = (
-            "click" in html_source.lower() and
-            "focus" in html_source.lower()
+            "click" in html_source.lower() and "focus" in html_source.lower()
         )
         assert has_click_focus, "No click-to-focus handler found"
 
@@ -172,20 +176,21 @@ class TestClosePane:
 
     def test_close_button_exists(self, html_source):
         """Each pane has a close button (X or similar)."""
-        has_close = (
-            "close" in html_source.lower() and
-            ("X" in html_source or "x" in html_source or
-             "&#x2715" in html_source or "\\u00d7" in html_source or
-             "times" in html_source)
+        has_close = "close" in html_source.lower() and (
+            "X" in html_source
+            or "x" in html_source
+            or "&#x2715" in html_source
+            or "\\u00d7" in html_source
+            or "times" in html_source
         )
         assert has_close, "No close button found for panes"
 
     def test_pane_header_exists(self, html_source):
         """Each pane has a header/title bar."""
         has_header = (
-            "pane-header" in html_source or
-            "paneHeader" in html_source or
-            "terminal-header" in html_source
+            "pane-header" in html_source
+            or "paneHeader" in html_source
+            or "terminal-header" in html_source
         )
         assert has_header, "No pane header element found"
 
@@ -193,14 +198,14 @@ class TestClosePane:
         """Closing the last pane auto-creates a new terminal."""
         # Look for logic that prevents zero panes
         has_auto_create = (
-            "length === 0" in html_source or
-            "length == 0" in html_source or
-            "no active" in html_source.lower() or
-            "last pane" in html_source.lower() or
-            "at least" in html_source.lower() or
-            "activePanes" in html_source or
-            "panes.size === 0" in html_source or
-            "panes.size == 0" in html_source
+            "length === 0" in html_source
+            or "length == 0" in html_source
+            or "no active" in html_source.lower()
+            or "last pane" in html_source.lower()
+            or "at least" in html_source.lower()
+            or "activePanes" in html_source
+            or "panes.size === 0" in html_source
+            or "panes.size == 0" in html_source
         )
         assert has_auto_create, (
             "No auto-create logic found for when the last pane is closed"
@@ -235,13 +240,13 @@ class TestPollingEfficiency:
     def test_poll_pauses_when_no_sessions(self, html_source):
         """Polling skips/pauses when there are no active sessions."""
         has_skip_logic = (
-            "length === 0" in html_source or
-            "length == 0" in html_source or
-            "no session" in html_source.lower() or
-            "size === 0" in html_source or
-            "size == 0" in html_source or
-            "!sessionIds" in html_source or
-            "sessionIds.length" in html_source
+            "length === 0" in html_source
+            or "length == 0" in html_source
+            or "no session" in html_source.lower()
+            or "size === 0" in html_source
+            or "size == 0" in html_source
+            or "!sessionIds" in html_source
+            or "sessionIds.length" in html_source
         )
         assert has_skip_logic, "No logic to pause polling when no sessions are active"
 
@@ -253,7 +258,8 @@ class TestLoadingScreenNotModified:
         """loading.html exists and was not modified by this feature."""
         loading_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "static", "loading.html"
+            "static",
+            "loading.html",
         )
         assert os.path.exists(loading_path), "loading.html is missing"
         # Just verify it still exists -- visual testing will confirm content

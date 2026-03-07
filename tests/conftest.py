@@ -20,6 +20,7 @@ def app_client():
     os.environ.setdefault("DATABRICKS_TOKEN", "dapi_test_token_12345")
 
     from app import app
+
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client

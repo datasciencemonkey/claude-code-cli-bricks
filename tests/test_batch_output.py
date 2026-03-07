@@ -6,7 +6,6 @@ The existing /api/output endpoint remains for backward compatibility.
 """
 
 import time
-import pytest
 
 
 class TestBatchOutputEndpoint:
@@ -46,9 +45,7 @@ class TestBatchOutputEndpoint:
         sid2 = create_session()
         time.sleep(0.3)
 
-        resp = app_client.post("/api/output-batch", json={
-            "session_ids": [sid1, sid2]
-        })
+        resp = app_client.post("/api/output-batch", json={"session_ids": [sid1, sid2]})
         data = resp.get_json()
 
         assert resp.status_code == 200
@@ -60,9 +57,9 @@ class TestBatchOutputEndpoint:
         sid = create_session()
         time.sleep(0.3)
 
-        resp = app_client.post("/api/output-batch", json={
-            "session_ids": [sid, "nonexistent-session-id"]
-        })
+        resp = app_client.post(
+            "/api/output-batch", json={"session_ids": [sid, "nonexistent-session-id"]}
+        )
         data = resp.get_json()
 
         assert resp.status_code == 200

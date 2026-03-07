@@ -12,8 +12,6 @@ AC-10: The credential helper implements the git credential helper protocol:
 import os
 import stat
 import subprocess
-import tempfile
-import textwrap
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -32,6 +30,7 @@ def _mock_setup_git_config(tmp_path, monkeypatch):
 
     with patch("databricks.sdk.WorkspaceClient", return_value=mock_client):
         from app import _setup_git_config
+
         _setup_git_config()
 
 
@@ -148,8 +147,12 @@ class TestCredentialHelperProtocol:
             input="protocol=https\nhost=github.com\n\n",
             capture_output=True,
             text=True,
-            env={**os.environ, "GIT_TOKEN": "ghp_enterprise", "GIT_TOKEN_HOST": "github.com",
-                 "DATABRICKS_TOKEN": "dapi_fallback"},
+            env={
+                **os.environ,
+                "GIT_TOKEN": "ghp_enterprise",
+                "GIT_TOKEN_HOST": "github.com",
+                "DATABRICKS_TOKEN": "dapi_fallback",
+            },
             timeout=5,
         )
         assert result.returncode == 0
@@ -162,8 +165,12 @@ class TestCredentialHelperProtocol:
             input="protocol=https\nhost=dev.azure.com\n\n",
             capture_output=True,
             text=True,
-            env={**os.environ, "GIT_TOKEN": "ghp_enterprise", "GIT_TOKEN_HOST": "github.com",
-                 "DATABRICKS_TOKEN": "dapi_fallback"},
+            env={
+                **os.environ,
+                "GIT_TOKEN": "ghp_enterprise",
+                "GIT_TOKEN_HOST": "github.com",
+                "DATABRICKS_TOKEN": "dapi_fallback",
+            },
             timeout=5,
         )
         assert result.returncode == 0
@@ -177,8 +184,11 @@ class TestCredentialHelperProtocol:
                 input=f"protocol=https\nhost={host}\n\n",
                 capture_output=True,
                 text=True,
-                env={**os.environ, "GIT_TOKEN": "ghp_universal",
-                     "DATABRICKS_TOKEN": "dapi_should_not_use"},
+                env={
+                    **os.environ,
+                    "GIT_TOKEN": "ghp_universal",
+                    "DATABRICKS_TOKEN": "dapi_should_not_use",
+                },
                 timeout=5,
             )
             assert result.returncode == 0
