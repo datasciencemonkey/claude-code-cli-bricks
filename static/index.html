@@ -68,6 +68,11 @@
     #pane-container.layout-hsplit { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
     #pane-container.layout-vsplit { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
     #pane-container.layout-quad   { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+    #pane-container.layout-six    { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+    #pane-container.layout-nine   { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+    #pane-container.layout-twelve { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+    #pane-container.layout-sixteen { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr 1fr; }
+    #pane-container.layout-twenty { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr 1fr; }
 
     /* Pane slot */
     .pane-slot {
@@ -147,10 +152,15 @@
 <body>
   <div id="toolbar">
     <span class="toolbar-label">Layout:</span>
-    <button class="layout-btn active" data-layout="single">Single</button>
-    <button class="layout-btn" data-layout="hsplit">H-Split</button>
-    <button class="layout-btn" data-layout="vsplit">V-Split</button>
-    <button class="layout-btn" data-layout="quad">Quad</button>
+    <button class="layout-btn active" data-layout="single">1</button>
+    <button class="layout-btn" data-layout="hsplit">2h</button>
+    <button class="layout-btn" data-layout="vsplit">2v</button>
+    <button class="layout-btn" data-layout="quad">4</button>
+    <button class="layout-btn" data-layout="six">6</button>
+    <button class="layout-btn" data-layout="nine">9</button>
+    <button class="layout-btn" data-layout="twelve">12</button>
+    <button class="layout-btn" data-layout="sixteen">16</button>
+    <button class="layout-btn" data-layout="twenty">20</button>
     <div class="pane-indicators" id="pane-indicators"></div>
     <span class="shortcut-hint">Ctrl+Shift+N: cycle focus</span>
   </div>
@@ -319,10 +329,15 @@
 
     /* ===== LayoutManager: handles layout switching, pane lifecycle, polling ===== */
     const LAYOUTS = {
-      single: { slots: 1 },
-      hsplit: { slots: 2 },
-      vsplit: { slots: 2 },
-      quad:   { slots: 4 },
+      single:  { slots: 1 },
+      hsplit:  { slots: 2 },
+      vsplit:  { slots: 2 },
+      quad:    { slots: 4 },
+      six:     { slots: 6 },
+      nine:    { slots: 9 },
+      twelve:  { slots: 12 },
+      sixteen: { slots: 16 },
+      twenty:  { slots: 20 },
     };
 
     // Adaptive polling intervals (ms)
@@ -398,6 +413,11 @@
             if (existingSessions.length === 1) layout = 'single';
             else if (existingSessions.length === 2) layout = 'hsplit';
             else if (existingSessions.length <= 4) layout = 'quad';
+            else if (existingSessions.length <= 6) layout = 'six';
+            else if (existingSessions.length <= 9) layout = 'nine';
+            else if (existingSessions.length <= 12) layout = 'twelve';
+            else if (existingSessions.length <= 16) layout = 'sixteen';
+            else layout = 'twenty';
           }
           await this.setLayout(layout);
 
