@@ -8,11 +8,19 @@ or via the AI Gateway at /openai/v1.
 Config: ~/.codex/config.toml with custom model_providers for Databricks.
 Auth: Bearer token via DATABRICKS_TOKEN environment variable.
 """
+
+import logging
 import os
 import subprocess
 from pathlib import Path
 
-from utils import adapt_instructions_file, ensure_https, resolve_databricks_host_and_token
+from utils import (
+    adapt_instructions_file,
+    ensure_https,
+    resolve_databricks_host_and_token,
+)
+
+logger = logging.getLogger(__name__)
 
 # Set HOME if not properly set
 if not os.environ.get("HOME") or os.environ["HOME"] == "/":
@@ -24,7 +32,9 @@ host, token = resolve_databricks_host_and_token()
 codex_model = os.environ.get("CODEX_MODEL", "databricks-gpt-5-2")
 
 if not host or not token:
-    print("Error: DATABRICKS_HOST or auth token not available, cannot configure Codex CLI")
+    logger.error(
+        "DATABRICKS_HOST or auth token not available, cannot configure Codex CLI"
+    )
     raise SystemExit(1)
 
 # Strip trailing slash and ensure https:// prefix
@@ -34,17 +44,19 @@ host = ensure_https(host.rstrip("/"))
 gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
 gateway_token = token if gateway_host else ""
 if gateway_host and not gateway_token:
-    print("Warning: DATABRICKS_GATEWAY_HOST set but token unavailable, falling back to DATABRICKS_HOST")
+    logger.warning(
+        "DATABRICKS_GATEWAY_HOST set but token unavailable, falling back to DATABRICKS_HOST"
+    )
     gateway_host = ""
 
 if gateway_host:
     codex_base_url = f"{gateway_host}/openai/v1"
     auth_token = gateway_token
-    print(f"Using Databricks AI Gateway: {gateway_host}")
+    logger.info(f"Using Databricks AI Gateway: {gateway_host}")
 else:
     codex_base_url = f"{host}/serving-endpoints"
     auth_token = token
-    print(f"Using Databricks Host: {host}")
+    logger.info(f"Using Databricks Host: {host}")
 
 # 1. Install Codex CLI into ~/.local/bin
 local_bin = home / ".local" / "bin"
@@ -52,7 +64,7 @@ local_bin.mkdir(parents=True, exist_ok=True)
 codex_bin = local_bin / "codex"
 
 if not codex_bin.exists():
-    print("Installing Codex CLI...")
+    logger.info("Installing Codex CLI...")
     # Use --prefix ~/.local so npm installs directly into ~/.local/bin
     npm_prefix = str(home / ".local")
     result = subprocess.run(
@@ -62,12 +74,12 @@ if not codex_bin.exists():
         env={**os.environ, "HOME": str(home)},
     )
     if result.returncode == 0:
-        print(f"Codex CLI installed to {codex_bin}")
+        logger.info(f"Codex CLI installed to {codex_bin}")
     else:
-        print(f"Codex CLI install failed: {result.stderr}")
+        logger.error(f"Codex CLI install failed: {result.stderr}")
         raise SystemExit(1)
 else:
-    print(f"Codex CLI already installed at {codex_bin}")
+    logger.info(f"Codex CLI already installed at {codex_bin}")
 
 # 2. Create ~/.codex directory and write config.toml
 codex_dir = home / ".codex"
@@ -94,7 +106,7 @@ wire_api = "responses"
 
 config_path = codex_dir / "config.toml"
 config_path.write_text(config_content)
-print(f"Codex CLI configured: {config_path}")
+logger.info(f"Codex CLI configured: {config_path}")
 
 # 3. Write OPENAI_API_KEY to shell profile for Codex to pick up
 # Codex reads from env_key specified in config (OPENAI_API_KEY)
@@ -106,13 +118,13 @@ OPENAI_API_KEY={auth_token}
 env_path = codex_dir / ".env"
 env_path.write_text(env_content)
 env_path.chmod(0o600)
-print(f"Codex CLI env configured: {env_path}")
+logger.info(f"Codex CLI env configured: {env_path}")
 
 # 4. Adapt CLAUDE.md to AGENTS.md for Codex
 # Look for CLAUDE.md in common locations
 claude_md_locations = [
     Path(__file__).parent / "CLAUDE.md",  # Same directory as setup script
-    home / ".claude" / "CLAUDE.md",        # User's Claude config
+    home / ".claude" / "CLAUDE.md",  # User's Claude config
     Path("/app/python/source_code/CLAUDE.md"),  # Databricks App location
 ]
 
@@ -130,9 +142,9 @@ adapt_instructions_file(
     cli_name="Codex",
 )
 
-print("\nCodex CLI ready! Usage:")
-print("  codex                              # Start Codex CLI")
-print("  codex 'explain this codebase'      # Run with prompt")
-print(f"\nEndpoint: {codex_base_url}")
-print(f"Model: {codex_model}")
-print("Auth: Bearer token (Databricks PAT via OPENAI_API_KEY)")
+logger.info("Codex CLI ready! Usage:")
+logger.info("  codex                              # Start Codex CLI")
+logger.info("  codex 'explain this codebase'      # Run with prompt")
+logger.info(f"Endpoint: {codex_base_url}")
+logger.info(f"Model: {codex_model}")
+logger.info("Auth: Bearer token (Databricks PAT via OPENAI_API_KEY)")

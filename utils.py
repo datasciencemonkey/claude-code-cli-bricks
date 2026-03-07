@@ -20,44 +20,46 @@ def adapt_instructions_file(
     cli_name: str,
 ) -> bool:
     """Read a CLAUDE.md file and adapt it for another CLI's instructions format.
-    
+
     Reads the source instructions file (typically CLAUDE.md), replaces the first
     header line with a CLI-specific header, and writes to the target location.
-    
+
     Args:
         source_path: Path to the source instructions file (e.g., CLAUDE.md)
         target_path: Path to write the adapted instructions file
         new_header: The new header line (e.g., "# Codex Agent Instructions")
         cli_name: Name of the CLI for logging (e.g., "Codex", "Gemini")
-        
+
     Returns:
         True if successful, False if source file not found
     """
     if not source_path.exists():
-        print(f"Warning: {source_path} not found, skipping {cli_name} instructions")
+        logger.warning(f"{source_path} not found, skipping {cli_name} instructions")
         return False
-    
+
     content = source_path.read_text()
-    
+
     # Replace the first markdown header (# ...) with the new header
     # This handles "# Claude Code on Databricks" -> "# Codex Agent Instructions"
-    adapted_content = re.sub(r"^#\s+.*$", new_header, content, count=1, flags=re.MULTILINE)
-    
+    adapted_content = re.sub(
+        r"^#\s+.*$", new_header, content, count=1, flags=re.MULTILINE
+    )
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(adapted_content)
-    print(f"{cli_name} instructions configured: {target_path}")
+    logger.info(f"{cli_name} instructions configured: {target_path}")
     return True
 
 
 def ensure_https(url: str) -> str:
     """Ensure a URL has the https:// prefix.
-    
+
     Databricks Apps may inject DATABRICKS_HOST without the protocol prefix,
     which causes URL parsing errors downstream.
-    
+
     Args:
         url: A URL that may or may not have a protocol prefix
-        
+
     Returns:
         The URL with https:// prefix (or unchanged if already has http(s)://)
     """
@@ -70,6 +72,7 @@ def ensure_https(url: str) -> str:
 
 class AuthMode(enum.Enum):
     """How the app authenticates with Databricks."""
+
     PAT = "pat"
     OAUTH_M2M = "oauth_m2m"
 
@@ -77,6 +80,7 @@ class AuthMode(enum.Enum):
 @dataclass
 class AuthState:
     """Resolved authentication state."""
+
     mode: AuthMode
     host: str
     token: str
@@ -225,11 +229,11 @@ def _update_all_token_files(old_token: str, new_token: str):
     home = Path(os.environ.get("HOME", "/app/python/source_code"))
 
     config_files = [
-        home / ".claude" / "settings.json",       # ANTHROPIC_AUTH_TOKEN
-        home / ".gemini" / ".env",                 # GEMINI_API_KEY
-        home / ".codex" / ".env",                  # OPENAI_API_KEY
+        home / ".claude" / "settings.json",  # ANTHROPIC_AUTH_TOKEN
+        home / ".gemini" / ".env",  # GEMINI_API_KEY
+        home / ".codex" / ".env",  # OPENAI_API_KEY
         home / ".local" / "share" / "opencode" / "auth.json",  # api_key
-        home / ".databrickscfg",                   # token
+        home / ".databrickscfg",  # token
     ]
 
     for path in config_files:
@@ -239,6 +243,7 @@ def _update_all_token_files(old_token: str, new_token: str):
             content = path.read_text()
             if old_token in content:
                 path.write_text(content.replace(old_token, new_token))
+                path.chmod(0o600)
                 logger.debug(f"TokenRefresher: updated {path}")
         except Exception as e:
             logger.warning(f"TokenRefresher: failed to update {path}: {e}")

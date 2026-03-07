@@ -10,13 +10,21 @@ URLs, switching to Bearer token auth automatically.
 
 Auth: GEMINI_API_KEY_AUTH_MECHANISM=bearer sends Databricks PAT as Bearer token.
 """
+
+import logging
 import os
 import json
 import shutil
 import subprocess
 from pathlib import Path
 
-from utils import adapt_instructions_file, ensure_https, resolve_databricks_host_and_token
+from utils import (
+    adapt_instructions_file,
+    ensure_https,
+    resolve_databricks_host_and_token,
+)
+
+logger = logging.getLogger(__name__)
 
 # Set HOME if not properly set
 if not os.environ.get("HOME") or os.environ["HOME"] == "/":
@@ -28,7 +36,9 @@ host, token = resolve_databricks_host_and_token()
 gemini_model = os.environ.get("GEMINI_MODEL", "databricks-gemini-3-1-pro")
 
 if not host or not token:
-    print("Error: DATABRICKS_HOST or auth token not available, cannot configure Gemini CLI")
+    logger.error(
+        "DATABRICKS_HOST or auth token not available, cannot configure Gemini CLI"
+    )
     raise SystemExit(1)
 
 # Strip trailing slash and ensure https:// prefix
@@ -38,17 +48,19 @@ host = ensure_https(host.rstrip("/"))
 gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
 gateway_token = token if gateway_host else ""
 if gateway_host and not gateway_token:
-    print("Warning: DATABRICKS_GATEWAY_HOST set but token unavailable, falling back to DATABRICKS_HOST")
+    logger.warning(
+        "DATABRICKS_GATEWAY_HOST set but token unavailable, falling back to DATABRICKS_HOST"
+    )
     gateway_host = ""
 
 if gateway_host:
     gemini_base_url = f"{gateway_host}/gemini"
     auth_token = gateway_token
-    print(f"Using Databricks AI Gateway: {gateway_host}")
+    logger.info(f"Using Databricks AI Gateway: {gateway_host}")
 else:
     gemini_base_url = f"{host}/serving-endpoints/google"
     auth_token = token
-    print(f"Using Databricks Host: {host}")
+    logger.info(f"Using Databricks Host: {host}")
 
 # 1. Install Gemini CLI into ~/.local/bin (same approach as Claude Code)
 local_bin = home / ".local" / "bin"
@@ -56,21 +68,28 @@ local_bin.mkdir(parents=True, exist_ok=True)
 gemini_bin = local_bin / "gemini"
 
 if not gemini_bin.exists():
-    print("Installing Gemini CLI...")
+    logger.info("Installing Gemini CLI...")
     # Use --prefix ~/.local so npm installs directly into ~/.local/bin (avoids EACCES on /usr/local)
     npm_prefix = str(home / ".local")
     result = subprocess.run(
-        ["npm", "install", "-g", f"--prefix={npm_prefix}", "@google/gemini-cli@nightly"],
-        capture_output=True, text=True,
-        env={**os.environ, "HOME": str(home)}
+        [
+            "npm",
+            "install",
+            "-g",
+            f"--prefix={npm_prefix}",
+            "@google/gemini-cli@nightly",
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(home)},
     )
     if result.returncode == 0:
-        print(f"Gemini CLI installed to {gemini_bin}")
+        logger.info(f"Gemini CLI installed to {gemini_bin}")
     else:
-        print(f"Gemini CLI install failed: {result.stderr}")
+        logger.error(f"Gemini CLI install failed: {result.stderr}")
         raise SystemExit(1)
 else:
-    print(f"Gemini CLI already installed at {gemini_bin}")
+    logger.info(f"Gemini CLI already installed at {gemini_bin}")
 
 # 2. Create ~/.gemini directory and configure environment
 gemini_dir = home / ".gemini"
@@ -89,20 +108,18 @@ GEMINI_API_KEY={auth_token}
 env_path = gemini_dir / ".env"
 env_path.write_text(env_content)
 env_path.chmod(0o600)
-print(f"Gemini CLI env configured: {env_path}")
+logger.info(f"Gemini CLI env configured: {env_path}")
 
 # 3. Write settings.json with model preferences and auth
 settings = {
     "theme": "Default",
     "selectedAuthType": "gemini-api-key",
-    "model": {
-        "name": gemini_model
-    }
+    "model": {"name": gemini_model},
 }
 
 settings_path = gemini_dir / "settings.json"
 settings_path.write_text(json.dumps(settings, indent=2))
-print(f"Gemini CLI settings configured: {settings_path}")
+logger.info(f"Gemini CLI settings configured: {settings_path}")
 
 # 4. Copy Claude skills into .gemini/skills for shared reference
 claude_skills_dir = home / ".claude" / "skills"
@@ -111,15 +128,15 @@ if claude_skills_dir.exists():
     if gemini_skills_dir.exists():
         shutil.rmtree(gemini_skills_dir)
     shutil.copytree(claude_skills_dir, gemini_skills_dir)
-    print(f"Skills copied: {claude_skills_dir} -> {gemini_skills_dir}")
+    logger.info(f"Skills copied: {claude_skills_dir} -> {gemini_skills_dir}")
 else:
-    print(f"No Claude skills found at {claude_skills_dir}, skipping copy")
+    logger.info(f"No Claude skills found at {claude_skills_dir}, skipping copy")
 
 # 5. Adapt CLAUDE.md to GEMINI.md for Gemini CLI
 # Look for CLAUDE.md in common locations
 claude_md_locations = [
     Path(__file__).parent / "CLAUDE.md",  # Same directory as setup script
-    home / ".claude" / "CLAUDE.md",        # User's Claude config
+    home / ".claude" / "CLAUDE.md",  # User's Claude config
     Path("/app/python/source_code/CLAUDE.md"),  # Databricks App location
 ]
 
@@ -137,7 +154,7 @@ adapt_instructions_file(
     cli_name="Gemini",
 )
 
-print("\nGemini CLI ready! Usage:")
-print("  gemini                                    # Start Gemini CLI")
-print(f"\nEndpoint: {gemini_base_url}")
-print("Auth: Bearer token (Databricks PAT)")
+logger.info("Gemini CLI ready! Usage:")
+logger.info("  gemini                                    # Start Gemini CLI")
+logger.info(f"Endpoint: {gemini_base_url}")
+logger.info("Auth: Bearer token (Databricks PAT)")

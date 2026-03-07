@@ -14,22 +14,49 @@ import copy
 import logging
 import shutil
 import sys
-from flask import Flask, send_from_directory, request, jsonify, session
+from flask import Flask, send_from_directory, request, jsonify
 from collections import deque
 
-from utils import ensure_https, resolve_auth, AuthMode, TokenRefresher
+from utils import resolve_auth, AuthMode, TokenRefresher
 from state_sync import save_state, restore_state, start_periodic_sync
 
 # Session timeout configuration
-SESSION_TIMEOUT_SECONDS = 120       # No poll for 120s = dead PTY wrapper (tmux persists)
-CLEANUP_INTERVAL_SECONDS = 30       # How often to check for stale sessions
-GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
+SESSION_TIMEOUT_SECONDS = 120  # No poll for 120s = dead PTY wrapper (tmux persists)
+CLEANUP_INTERVAL_SECONDS = 30  # How often to check for stale sessions
+GRACEFUL_SHUTDOWN_WAIT = 3  # Seconds to wait after SIGHUP before SIGKILL
+
+
+# Simple in-memory rate limiter
+class RateLimiter:
+    """Token-bucket rate limiter per IP address."""
+
+    def __init__(self, rate=10, per=1.0, burst=20):
+        self._rate = rate
+        self._per = per
+        self._burst = burst
+        self._tokens = {}  # ip -> (tokens, last_time)
+        self._lock = threading.Lock()
+
+    def allow(self, key):
+        now = time.time()
+        with self._lock:
+            tokens, last = self._tokens.get(key, (self._burst, now))
+            elapsed = now - last
+            tokens = min(self._burst, tokens + elapsed * (self._rate / self._per))
+            if tokens >= 1:
+                self._tokens[key] = (tokens - 1, now)
+                return True
+            self._tokens[key] = (tokens, now)
+            return False
+
+
+rate_limiter = RateLimiter(rate=10, per=1.0, burst=20)
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder='static', static_url_path='/static')
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.urandom(24)
 
 # Store sessions: {session_id: {"master_fd": fd, "pid": pid, "output_buffer": deque}}
@@ -44,18 +71,95 @@ setup_state = {
     "completed_at": None,
     "error": None,
     "steps": [
-        {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "tmux",       "label": "Installing tmux",              "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "opencode",   "label": "Configuring OpenCode CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "gemini",     "label": "Configuring Gemini CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "databricks", "label": "Setting up Databricks CLI",    "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "git_clone",  "label": "Cloning git repositories",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "state",      "label": "Restoring saved state",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
-    ]
+        {
+            "id": "git",
+            "label": "Configuring git identity",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "micro",
+            "label": "Installing micro editor",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "gh",
+            "label": "Installing GitHub CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "tmux",
+            "label": "Installing tmux",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "claude",
+            "label": "Configuring Claude CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "codex",
+            "label": "Configuring Codex CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "opencode",
+            "label": "Configuring OpenCode CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "gemini",
+            "label": "Configuring Gemini CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "databricks",
+            "label": "Setting up Databricks CLI",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "git_clone",
+            "label": "Cloning git repositories",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
+            "id": "state",
+            "label": "Restoring saved state",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+    ],
 }
 
 
@@ -85,14 +189,23 @@ def _run_step(step_id, command):
         if not env.get("HOME") or env["HOME"] == "/":
             env["HOME"] = "/app/python/source_code"
 
-        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(
+            command, env=env, capture_output=True, text=True, timeout=300
+        )
         if result.returncode == 0:
             _update_step(step_id, status="complete", completed_at=time.time())
         else:
             err = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-            _update_step(step_id, status="error", completed_at=time.time(), error=err[:500])
+            _update_step(
+                step_id, status="error", completed_at=time.time(), error=err[:500]
+            )
     except subprocess.TimeoutExpired:
-        _update_step(step_id, status="error", completed_at=time.time(), error="Timed out after 300s")
+        _update_step(
+            step_id,
+            status="error",
+            completed_at=time.time(),
+            error="Timed out after 300s",
+        )
     except Exception as e:
         _update_step(step_id, status="error", completed_at=time.time(), error=str(e))
 
@@ -108,6 +221,7 @@ def _setup_git_config():
     display_name = None
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         me = w.current_user.me()
         user_email = me.user_name
@@ -125,42 +239,54 @@ def _setup_git_config():
     os.makedirs(local_bin, exist_ok=True)
     credential_helper_path = os.path.join(local_bin, "git-credential-databricks")
     with open(credential_helper_path, "w") as f:
-        f.write('#!/bin/bash\n')
-        f.write('# Git credential helper: host-aware, supports both enterprise git and Databricks.\n')
-        f.write('# Implements the git credential helper protocol.\n')
-        f.write('#\n')
-        f.write('# GIT_TOKEN + GIT_TOKEN_HOST → used for matching hosts (GitHub, Azure DevOps, GitLab)\n')
-        f.write('# DATABRICKS_TOKEN → fallback for Databricks-hosted git and other hosts\n')
-        f.write('\n')
+        f.write("#!/bin/bash\n")
+        f.write(
+            "# Git credential helper: host-aware, supports both enterprise git and Databricks.\n"
+        )
+        f.write("# Implements the git credential helper protocol.\n")
+        f.write("#\n")
+        f.write(
+            "# GIT_TOKEN + GIT_TOKEN_HOST → used for matching hosts (GitHub, Azure DevOps, GitLab)\n"
+        )
+        f.write(
+            "# DATABRICKS_TOKEN → fallback for Databricks-hosted git and other hosts\n"
+        )
+        f.write("\n")
         f.write('# Only respond to "get" action; silently ignore store/erase.\n')
         f.write('if [ "$1" != "get" ]; then\n')
-        f.write('    exit 0\n')
-        f.write('fi\n')
-        f.write('\n')
-        f.write('# Read stdin to extract the host being requested.\n')
+        f.write("    exit 0\n")
+        f.write("fi\n")
+        f.write("\n")
+        f.write("# Read stdin to extract the host being requested.\n")
         f.write('REQ_HOST=""\n')
-        f.write('while IFS= read -r line; do\n')
+        f.write("while IFS= read -r line; do\n")
         f.write('    [ -z "$line" ] && break\n')
         f.write('    case "$line" in\n')
         f.write('        host=*) REQ_HOST="${line#host=}" ;;\n')
-        f.write('    esac\n')
-        f.write('done\n')
-        f.write('\n')
-        f.write('# If GIT_TOKEN is set, use it for matching hosts (or all hosts if GIT_TOKEN_HOST is unset).\n')
+        f.write("    esac\n")
+        f.write("done\n")
+        f.write("\n")
+        f.write(
+            "# If GIT_TOKEN is set, use it for matching hosts (or all hosts if GIT_TOKEN_HOST is unset).\n"
+        )
         f.write('if [ -n "$GIT_TOKEN" ]; then\n')
-        f.write('    if [ -z "$GIT_TOKEN_HOST" ] || echo "$REQ_HOST" | grep -qi "$GIT_TOKEN_HOST"; then\n')
+        f.write(
+            '    if [ -z "$GIT_TOKEN_HOST" ] || echo "$REQ_HOST" | grep -qi "$GIT_TOKEN_HOST"; then\n'
+        )
         f.write('        printf "username=token\\npassword=%s\\n" "$GIT_TOKEN"\n')
-        f.write('        exit 0\n')
-        f.write('    fi\n')
-        f.write('fi\n')
-        f.write('\n')
-        f.write('# Fallback to DATABRICKS_TOKEN for Databricks-hosted git and other hosts.\n')
+        f.write("        exit 0\n")
+        f.write("    fi\n")
+        f.write("fi\n")
+        f.write("\n")
+        f.write(
+            "# Fallback to DATABRICKS_TOKEN for Databricks-hosted git and other hosts.\n"
+        )
         f.write('if [ -n "$DATABRICKS_TOKEN" ]; then\n')
         f.write('    printf "username=token\\npassword=%s\\n" "$DATABRICKS_TOKEN"\n')
-        f.write('    exit 0\n')
-        f.write('fi\n')
-        f.write('\n')
-        f.write('exit 1\n')
+        f.write("    exit 0\n")
+        f.write("fi\n")
+        f.write("\n")
+        f.write("exit 1\n")
     os.chmod(credential_helper_path, 0o755)
     logger.info(f"Git credential helper written to {credential_helper_path}")
 
@@ -180,72 +306,90 @@ def _setup_git_config():
 
     # Post-commit hook: workspace sync (opt-in) or just a placeholder
     post_commit = os.path.join(hooks_dir, "post-commit")
-    workspace_sync = os.environ.get("WORKSPACE_SYNC", "").lower() in ("1", "true", "yes")
+    workspace_sync = os.environ.get("WORKSPACE_SYNC", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     with open(post_commit, "w") as f:
-        f.write('#!/bin/bash\n')
+        f.write("#!/bin/bash\n")
         if workspace_sync:
-            f.write('# Auto-sync to Databricks Workspace on commit (WORKSPACE_SYNC=true)\n')
+            f.write(
+                "# Auto-sync to Databricks Workspace on commit (WORKSPACE_SYNC=true)\n"
+            )
             f.write('SYNC_LOG="$HOME/.sync.log"\n')
-            f.write('\n')
+            f.write("\n")
             f.write('REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n')
             f.write('if [ -z "$REPO_ROOT" ]; then\n')
-            f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: not inside a git repo" >> "$SYNC_LOG"\n')
-            f.write('    exit 0\n')
-            f.write('fi\n')
-            f.write('\n')
+            f.write(
+                '    echo "[post-commit] $(date +%H:%M:%S) SKIP: not inside a git repo" >> "$SYNC_LOG"\n'
+            )
+            f.write("    exit 0\n")
+            f.write("fi\n")
+            f.write("\n")
             f.write('PROJECTS_DIR="$HOME/projects"\n')
             f.write('case "$REPO_ROOT" in\n')
             f.write('    "$PROJECTS_DIR"/*)\n')
-            f.write('        ;; # allowed - continue\n')
-            f.write('    *)\n')
-            f.write('        echo "[post-commit] $(date +%H:%M:%S) SKIP: $REPO_ROOT is outside $PROJECTS_DIR" >> "$SYNC_LOG"\n')
-            f.write('        exit 0\n')
-            f.write('        ;;\n')
-            f.write('esac\n')
-            f.write('\n')
-            f.write('echo "[post-commit] $(date +%H:%M:%S) syncing $REPO_ROOT" >> "$SYNC_LOG"\n')
-            f.write('\n')
+            f.write("        ;; # allowed - continue\n")
+            f.write("    *)\n")
+            f.write(
+                '        echo "[post-commit] $(date +%H:%M:%S) SKIP: $REPO_ROOT is outside $PROJECTS_DIR" >> "$SYNC_LOG"\n'
+            )
+            f.write("        exit 0\n")
+            f.write("        ;;\n")
+            f.write("esac\n")
+            f.write("\n")
+            f.write(
+                'echo "[post-commit] $(date +%H:%M:%S) syncing $REPO_ROOT" >> "$SYNC_LOG"\n'
+            )
+            f.write("\n")
             f.write('VENV_PYTHON="/app/python/source_code/.venv/bin/python"\n')
             f.write('SYNC_SCRIPT="/app/python/source_code/sync_to_workspace.py"\n')
-            f.write('\n')
+            f.write("\n")
             f.write('if [ -x "$VENV_PYTHON" ] && [ -f "$SYNC_SCRIPT" ]; then\n')
-            f.write('    nohup "$VENV_PYTHON" "$SYNC_SCRIPT" "$REPO_ROOT" >> "$SYNC_LOG" 2>&1 & disown\n')
-            f.write('else\n')
-            f.write('    echo "[post-commit] $(date +%H:%M:%S) SKIP: venv=$VENV_PYTHON script=$SYNC_SCRIPT" >> "$SYNC_LOG"\n')
-            f.write('fi\n')
+            f.write(
+                '    nohup "$VENV_PYTHON" "$SYNC_SCRIPT" "$REPO_ROOT" >> "$SYNC_LOG" 2>&1 & disown\n'
+            )
+            f.write("else\n")
+            f.write(
+                '    echo "[post-commit] $(date +%H:%M:%S) SKIP: venv=$VENV_PYTHON script=$SYNC_SCRIPT" >> "$SYNC_LOG"\n'
+            )
+            f.write("fi\n")
         else:
-            f.write('# Workspace sync disabled (set WORKSPACE_SYNC=true to enable)\n')
-            f.write('exit 0\n')
+            f.write("# Workspace sync disabled (set WORKSPACE_SYNC=true to enable)\n")
+            f.write("exit 0\n")
     os.chmod(post_commit, 0o755)
     logger.info(f"Post-commit hook written to {post_commit}")
 
     # Write ~/.bashrc with colored prompt and aliases
     bashrc_path = os.path.join(home, ".bashrc")
     with open(bashrc_path, "w") as f:
-        f.write('# Colored prompt: user@host:dir$\n')
-        f.write('PS1=\'\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ \'\n')
-        f.write('\n')
-        f.write('# Color support\n')
+        f.write("# Colored prompt: user@host:dir$\n")
+        f.write(
+            "PS1='\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '\n"
+        )
+        f.write("\n")
+        f.write("# Color support\n")
         f.write('alias ls="ls --color=auto"\n')
         f.write('alias grep="grep --color=auto"\n')
-        f.write('export CLICOLOR=1\n')
+        f.write("export CLICOLOR=1\n")
     logger.info(f"Bashrc written to {bashrc_path}")
 
     # Ensure login shells source .bashrc
     bash_profile_path = os.path.join(home, ".bash_profile")
     with open(bash_profile_path, "w") as f:
-        f.write('# Source .bashrc for login shells\n')
-        f.write('[ -f ~/.bashrc ] && . ~/.bashrc\n')
+        f.write("# Source .bashrc for login shells\n")
+        f.write("[ -f ~/.bashrc ] && . ~/.bashrc\n")
 
     # Configure tmux: use login bash, enable 256-color, increase scrollback
     tmux_conf_path = os.path.join(home, ".tmux.conf")
     with open(tmux_conf_path, "w") as f:
-        f.write('set -g default-shell /bin/bash\n')
+        f.write("set -g default-shell /bin/bash\n")
         f.write('set -g default-command "/bin/bash --login"\n')
         f.write('set -g default-terminal "xterm-256color"\n')
-        f.write('set -g history-limit 10000\n')
-        f.write('set -g mouse on\n')
+        f.write("set -g history-limit 10000\n")
+        f.write("set -g mouse on\n")
 
 
 def _clone_git_repos():
@@ -276,7 +420,9 @@ def _clone_git_repos():
         try:
             result = subprocess.run(
                 ["git", "clone", repo_url, target_dir],
-                capture_output=True, text=True, timeout=120
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode != 0:
                 err = result.stderr.strip() or "clone failed"
@@ -290,8 +436,12 @@ def _clone_git_repos():
             errors.append(f"{repo_name}: {e}")
 
     if errors:
-        _update_step("git_clone", status="error", completed_at=time.time(),
-                      error="; ".join(errors)[:500])
+        _update_step(
+            "git_clone",
+            status="error",
+            completed_at=time.time(),
+            error="; ".join(errors)[:500],
+        )
     else:
         _update_step("git_clone", status="complete", completed_at=time.time())
 
@@ -318,42 +468,60 @@ def run_setup():
     except Exception as e:
         _update_step("git", status="error", completed_at=time.time(), error=str(e))
 
-    _run_step("micro", ["bash", "-c",
-        "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
-    _run_step("tmux", ["bash", "-c",
-        'which tmux >/dev/null 2>&1 || ('
-        'TMUX_VERSION="3.5a" && '
-        'mkdir -p ~/.local/bin ~/.local/lib/tmux-appdir && '
-        'curl -fsSL "https://github.com/nelsonenzo/tmux-appimage/releases/download/${TMUX_VERSION}/tmux.appimage" -o /tmp/tmux.appimage && '
-        'chmod +x /tmp/tmux.appimage && '
-        'cd /tmp && /tmp/tmux.appimage --appimage-extract >/dev/null 2>&1 && '
-        'mv /tmp/squashfs-root/* ~/.local/lib/tmux-appdir/ && '
-        'printf \'#!/bin/bash\\nexport APPDIR="$HOME/.local/lib/tmux-appdir"\\nexec "$APPDIR/AppRun" "$@"\\n\' > ~/.local/bin/tmux && '
-        'chmod +x ~/.local/bin/tmux && '
-        'rm -rf /tmp/tmux.appimage /tmp/squashfs-root'
-        ')'])
-    _run_step("gh", ["bash", "-c",
-        'GH_VERSION="2.74.1" && '
-        'mkdir -p ~/.local/bin && '
-        'curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz && '
-        'tar -xzf /tmp/gh.tar.gz -C /tmp && '
-        'mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && '
-        'rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_amd64 && '
-        'chmod +x ~/.local/bin/gh && '
-        # Configure gh to use git's credential protocol instead of its own
-        'gh config set git_protocol https 2>/dev/null || true && '
-        # Wrap gh to auto-add flags that skip interactive prompts (arrow-key menus break in xterm.js PTY)
-        # The PTY sends OSC escape sequences that corrupt gh's interactive prompt library,
-        # so we pipe "Y" to answer the git-credential prompt non-interactively.
-        'printf \'#!/bin/bash\\n'
-        'if [ "$1" = "auth" ] && [ "$2" = "login" ]; then\\n'
-        '    shift 2\\n'
-        '    printf "Y\\\\n" | ~/.local/bin/gh.real auth login -h github.com -p https -w --skip-ssh-key "$@"\\n'
-        'fi\\n'
-        'exec ~/.local/bin/gh.real "$@"\\n\' > ~/.local/bin/gh.wrapper && '
-        'mv ~/.local/bin/gh ~/.local/bin/gh.real && '
-        'mv ~/.local/bin/gh.wrapper ~/.local/bin/gh && '
-        'chmod +x ~/.local/bin/gh'])
+    _run_step(
+        "micro",
+        [
+            "bash",
+            "-c",
+            "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true",
+        ],
+    )
+    _run_step(
+        "tmux",
+        [
+            "bash",
+            "-c",
+            "which tmux >/dev/null 2>&1 || ("
+            'TMUX_VERSION="3.5a" && '
+            "mkdir -p ~/.local/bin ~/.local/lib/tmux-appdir && "
+            'curl -fsSL "https://github.com/nelsonenzo/tmux-appimage/releases/download/${TMUX_VERSION}/tmux.appimage" -o /tmp/tmux.appimage && '
+            "chmod +x /tmp/tmux.appimage && "
+            "cd /tmp && /tmp/tmux.appimage --appimage-extract >/dev/null 2>&1 && "
+            "mv /tmp/squashfs-root/* ~/.local/lib/tmux-appdir/ && "
+            'printf \'#!/bin/bash\\nexport APPDIR="$HOME/.local/lib/tmux-appdir"\\nexec "$APPDIR/AppRun" "$@"\\n\' > ~/.local/bin/tmux && '
+            "chmod +x ~/.local/bin/tmux && "
+            "rm -rf /tmp/tmux.appimage /tmp/squashfs-root"
+            ")",
+        ],
+    )
+    _run_step(
+        "gh",
+        [
+            "bash",
+            "-c",
+            'GH_VERSION="2.74.1" && '
+            "mkdir -p ~/.local/bin && "
+            'curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz && '
+            "tar -xzf /tmp/gh.tar.gz -C /tmp && "
+            "mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && "
+            "rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_amd64 && "
+            "chmod +x ~/.local/bin/gh && "
+            # Configure gh to use git's credential protocol instead of its own
+            "gh config set git_protocol https 2>/dev/null || true && "
+            # Wrap gh to auto-add flags that skip interactive prompts (arrow-key menus break in xterm.js PTY)
+            # The PTY sends OSC escape sequences that corrupt gh's interactive prompt library,
+            # so we pipe "Y" to answer the git-credential prompt non-interactively.
+            "printf '#!/bin/bash\\n"
+            'if [ "$1" = "auth" ] && [ "$2" = "login" ]; then\\n'
+            "    shift 2\\n"
+            '    printf "Y\\\\n" | ~/.local/bin/gh.real auth login -h github.com -p https -w --skip-ssh-key "$@"\\n'
+            "fi\\n"
+            'exec ~/.local/bin/gh.real "$@"\\n\' > ~/.local/bin/gh.wrapper && '
+            "mv ~/.local/bin/gh ~/.local/bin/gh.real && "
+            "mv ~/.local/bin/gh.wrapper ~/.local/bin/gh && "
+            "chmod +x ~/.local/bin/gh",
+        ],
+    )
     # Use the currently running interpreter instead of assuming `python` exists in PATH.
     py = sys.executable or "python"
     _run_step("claude", [py, "setup_claude.py"])
@@ -366,14 +534,20 @@ def run_setup():
     _clone_git_repos()
 
     # Restore persisted state (auto-memory, shell history) from Workspace
-    state_sync_enabled = os.environ.get("STATE_SYNC", "true").lower() in ("1", "true", "yes")
+    state_sync_enabled = os.environ.get("STATE_SYNC", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     if state_sync_enabled:
         _update_step("state", status="running", started_at=time.time())
         try:
             restore_state()
             _update_step("state", status="complete", completed_at=time.time())
         except Exception as e:
-            _update_step("state", status="error", completed_at=time.time(), error=str(e)[:500])
+            _update_step(
+                "state", status="error", completed_at=time.time(), error=str(e)[:500]
+            )
     else:
         _update_step("state", status="complete", completed_at=time.time())
 
@@ -395,6 +569,7 @@ def _get_app_owner(auth):
 
     try:
         from databricks.sdk import WorkspaceClient
+
         if not auth.host or not auth.token:
             return None
         w = WorkspaceClient(host=auth.host, token=auth.token, auth_type="pat")
@@ -406,26 +581,35 @@ def _get_app_owner(auth):
 
 def get_request_user():
     """Extract user email from Databricks Apps request headers."""
-    return request.headers.get("X-Forwarded-Email") or \
-           request.headers.get("X-Forwarded-User") or \
-           request.headers.get("X-Databricks-User-Email")
+    return (
+        request.headers.get("X-Forwarded-Email")
+        or request.headers.get("X-Forwarded-User")
+        or request.headers.get("X-Databricks-User-Email")
+    )
 
 
 def check_authorization():
     """Check if the current user is authorized to access the app."""
-    # If owner not set (local dev or SDK unavailable), allow access
-    if not app_owner:
+    # OAuth M2M mode: app_owner is None, Databricks proxy handles auth
+    if app_owner is None:
         return True, None
 
     current_user = get_request_user()
 
-    # If no user identity in request (local dev), allow access
-    if not current_user:
+    # If running locally without proxy headers, allow access
+    if not current_user and os.environ.get("FLASK_ENV") == "development":
         return True, None
+
+    # Reject if no user identity (proxy misconfiguration)
+    if not current_user:
+        logger.warning("Request without user identity header — rejecting")
+        return False, "unknown"
 
     # Check if current user is the owner
     if current_user != app_owner:
-        logger.warning(f"Unauthorized access attempt by {current_user} (owner: {app_owner})")
+        logger.warning(
+            f"Unauthorized access attempt by {current_user} (owner: {app_owner})"
+        )
         return False, current_user
 
     return True, None
@@ -449,7 +633,9 @@ def read_pty_output(session_id, fd):
                     break
                 with sessions_lock:
                     if session_id in sessions:
-                        sessions[session_id]["output_buffer"].append(output.decode(errors="replace"))
+                        sessions[session_id]["output_buffer"].append(
+                            output.decode(errors="replace")
+                        )
             else:
                 # select timed out — check if process is still alive
                 try:
@@ -505,7 +691,9 @@ def cleanup_stale_sessions():
         with sessions_lock:
             for session_id, session in sessions.items():
                 if now - session["last_poll_time"] > SESSION_TIMEOUT_SECONDS:
-                    stale_sessions.append((session_id, session["pid"], session["master_fd"]))
+                    stale_sessions.append(
+                        (session_id, session["pid"], session["master_fd"])
+                    )
 
         if stale_sessions:
             logger.info(f"Found {len(stale_sessions)} stale session(s) to clean up")
@@ -524,12 +712,33 @@ def authorize_request():
 
     authorized, user = check_authorization()
     if not authorized:
-        return jsonify({
-            "error": "Unauthorized",
-            "message": f"This app belongs to {app_owner}. You are logged in as {user}."
-        }), 403
+        return jsonify(
+            {
+                "error": "Unauthorized",
+                "message": f"This app belongs to {app_owner}. You are logged in as {user}.",
+            }
+        ), 403
+
+    # Rate limit API endpoints
+    if request.path.startswith("/api/") and request.path != "/api/setup-status":
+        client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        if not rate_limiter.allow(client_ip):
+            return jsonify({"error": "Rate limit exceeded"}), 429
 
     return None
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+    )
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 
 @app.route("/")
@@ -552,12 +761,14 @@ def health():
         session_count = len(sessions)
     with setup_lock:
         current_setup_status = setup_state["status"]
-    return jsonify({
-        "status": "healthy",
-        "setup_status": current_setup_status,
-        "active_sessions": session_count,
-        "session_timeout_seconds": SESSION_TIMEOUT_SECONDS
-    })
+    return jsonify(
+        {
+            "status": "healthy",
+            "setup_status": current_setup_status,
+            "active_sessions": session_count,
+            "session_timeout_seconds": SESSION_TIMEOUT_SECONDS,
+        }
+    )
 
 
 @app.route("/api/tmux-sessions")
@@ -568,11 +779,15 @@ def list_tmux_sessions():
     try:
         result = subprocess.run(
             ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode != 0:
             return jsonify({"sessions": []})
-        sessions_list = [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
+        sessions_list = [
+            s.strip() for s in result.stdout.strip().split("\n") if s.strip()
+        ]
         # Extract pane IDs from session names like "pane-0", "pane-1"
         pane_ids = []
         for name in sessions_list:
@@ -589,6 +804,11 @@ def list_tmux_sessions():
 @app.route("/api/session", methods=["POST"])
 def create_session():
     """Create a new terminal session."""
+    MAX_SESSIONS = 50
+    with sessions_lock:
+        if len(sessions) >= MAX_SESSIONS:
+            return jsonify({"error": "Maximum session limit reached"}), 503
+
     try:
         data = request.json or {}
         pane_id = int(data.get("pane_id", 0))
@@ -620,7 +840,8 @@ def create_session():
             # Check if this tmux session already exists (reattach vs new)
             check = subprocess.run(
                 ["tmux", "has-session", "-t", tmux_session],
-                capture_output=True, timeout=5
+                capture_output=True,
+                timeout=5,
             )
             reattached = check.returncode == 0
             shell_cmd = ["tmux", "new-session", "-A", "-s", tmux_session]
@@ -634,7 +855,7 @@ def create_session():
             stderr=slave_fd,
             preexec_fn=os.setsid,
             env=shell_env,
-            cwd=projects_dir
+            cwd=projects_dir,
         ).pid
 
         session_id = str(uuid.uuid4())
@@ -645,11 +866,13 @@ def create_session():
                 "pid": pid,
                 "output_buffer": deque(maxlen=1000),
                 "last_poll_time": time.time(),
-                "created_at": time.time()
+                "created_at": time.time(),
             }
 
         # Start background reader thread
-        thread = threading.Thread(target=read_pty_output, args=(session_id, master_fd), daemon=True)
+        thread = threading.Thread(
+            target=read_pty_output, args=(session_id, master_fd), daemon=True
+        )
         thread.start()
 
         return jsonify({"session_id": session_id, "reattached": reattached})
@@ -663,6 +886,8 @@ def send_input():
     data = request.json
     session_id = data.get("session_id")
     input_data = data.get("input", "")
+    if len(input_data) > 4096:
+        return jsonify({"error": "Input too large (max 4096 bytes)"}), 400
 
     with sessions_lock:
         if session_id not in sessions:
@@ -737,6 +962,10 @@ def resize_terminal():
     session_id = data.get("session_id")
     cols = data.get("cols", 80)
     rows = data.get("rows", 24)
+    if not isinstance(cols, int) or not isinstance(rows, int):
+        return jsonify({"error": "cols and rows must be integers"}), 400
+    if not (1 <= cols <= 500) or not (1 <= rows <= 200):
+        return jsonify({"error": "Terminal dimensions out of range"}), 400
 
     with sessions_lock:
         if session_id not in sessions:
@@ -799,7 +1028,9 @@ def initialize_app():
     # Start background cleanup thread
     cleanup_thread = threading.Thread(target=cleanup_stale_sessions, daemon=True)
     cleanup_thread.start()
-    logger.info(f"Started session cleanup thread (timeout={SESSION_TIMEOUT_SECONDS}s, interval={CLEANUP_INTERVAL_SECONDS}s)")
+    logger.info(
+        f"Started session cleanup thread (timeout={SESSION_TIMEOUT_SECONDS}s, interval={CLEANUP_INTERVAL_SECONDS}s)"
+    )
 
     # Start setup in background thread — app starts immediately with loading screen
     setup_thread = threading.Thread(target=run_setup, daemon=True, name="setup-thread")
@@ -807,7 +1038,11 @@ def initialize_app():
     logger.info("Started background setup thread")
 
     # State sync: periodic save + shutdown hook
-    state_sync_enabled = os.environ.get("STATE_SYNC", "true").lower() in ("1", "true", "yes")
+    state_sync_enabled = os.environ.get("STATE_SYNC", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     if state_sync_enabled:
         start_periodic_sync(interval=300)
         atexit.register(save_state)

@@ -218,9 +218,30 @@ function renderSteps(data) {
       timeStr = formatDuration(step.completed_at - step.started_at);
     }
 
-    div.innerHTML = '<span class="icon">' + icon + '</span><span class="label">' + step.label + '</span>' +
-      (timeStr ? '<span class="time">' + timeStr + '</span>' : '') +
-      (step.error ? '<span class="time" style="color:#f85149">' + step.error.substring(0, 80) + '</span>' : '');
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'icon';
+    iconSpan.textContent = icon;
+    div.appendChild(iconSpan);
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'label';
+    labelSpan.textContent = step.label;
+    div.appendChild(labelSpan);
+
+    if (timeStr) {
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'time';
+      timeSpan.textContent = timeStr;
+      div.appendChild(timeSpan);
+    }
+
+    if (step.error) {
+      const errorSpan = document.createElement('span');
+      errorSpan.className = 'time';
+      errorSpan.style.color = '#f85149';
+      errorSpan.textContent = step.error.substring(0, 80);
+      div.appendChild(errorSpan);
+    }
 
     stepsContainer.appendChild(div);
   });

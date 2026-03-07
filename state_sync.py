@@ -5,14 +5,20 @@ to /Workspace/Users/{email}/.state/ so they survive container restarts.
 """
 
 import os
-import io
 import base64
 import time
 import threading
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 logger = logging.getLogger(__name__)
+
+# Timeout for individual Workspace API calls (seconds)
+WORKSPACE_API_TIMEOUT = 30
+
+# Max file size to sync (bytes) - prevents syncing huge files
+MAX_SYNC_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Directories/files to sync (relative to HOME)
 STATE_ITEMS = [
@@ -33,6 +39,7 @@ def _get_home():
 
 def _get_workspace_client():
     from databricks.sdk import WorkspaceClient
+
     return WorkspaceClient()
 
 
@@ -83,6 +90,15 @@ def save_state():
         for file_path in files:
             rel = file_path.relative_to(home)
             ws_path = f"{base}/{rel}"
+
+            # Skip files that are too large
+            file_size = file_path.stat().st_size
+            if file_size > MAX_SYNC_FILE_SIZE:
+                logger.warning(
+                    f"State sync: skipping {rel} (size {file_size} exceeds {MAX_SYNC_FILE_SIZE})"
+                )
+                continue
+
             try:
                 content = file_path.read_bytes()
                 w.workspace.import_(
@@ -108,9 +124,14 @@ def restore_state():
         user_email = _get_user_email(w)
         base = _workspace_base(user_email)
 
-        # Check if state directory exists
+        # Check if state directory exists (with timeout)
         try:
-            w.workspace.get_status(base)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(w.workspace.get_status, base)
+                future.result(timeout=WORKSPACE_API_TIMEOUT)
+        except FuturesTimeoutError:
+            logger.warning(f"State sync: timeout checking {base}")
+            return
         except Exception:
             logger.info("State sync: no saved state found (first run)")
             return
@@ -125,8 +146,10 @@ def _restore_recursive(w, ws_path, local_base):
     """Recursively download files from a workspace directory."""
     restored = 0
     try:
-        items = list(w.workspace.list(ws_path))
-    except Exception:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: list(w.workspace.list(ws_path)))
+            items = future.result(timeout=WORKSPACE_API_TIMEOUT)
+    except (FuturesTimeoutError, Exception):
         return 0
 
     for item in items:
@@ -142,11 +165,17 @@ def _restore_recursive(w, ws_path, local_base):
             restored += _restore_recursive(w, item.path, local_base)
         else:
             try:
-                response = w.workspace.export(path=item.path, format="AUTO")
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        w.workspace.export, path=item.path, format="AUTO"
+                    )
+                    response = future.result(timeout=WORKSPACE_API_TIMEOUT)
                 if response.content:
                     local_path.parent.mkdir(parents=True, exist_ok=True)
                     local_path.write_bytes(base64.b64decode(response.content))
                     restored += 1
+            except FuturesTimeoutError:
+                logger.warning(f"State sync: timeout restoring {rel_path}")
             except Exception as e:
                 logger.warning(f"State sync: failed to restore {rel_path}: {e}")
 
@@ -155,6 +184,7 @@ def _restore_recursive(w, ws_path, local_base):
 
 def start_periodic_sync(interval=300):
     """Start a background thread that saves state every `interval` seconds."""
+
     def _sync_loop():
         while True:
             time.sleep(interval)

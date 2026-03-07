@@ -1,6 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Terminal</title>
   <link rel="stylesheet" href="/static/lib/xterm.css">
   <style>
@@ -150,22 +152,22 @@
   </style>
 </head>
 <body>
-  <div id="toolbar">
+  <div id="toolbar" role="toolbar" aria-label="Terminal layout controls">
     <span class="toolbar-label">Layout:</span>
-    <button class="layout-btn active" data-layout="single">1</button>
-    <button class="layout-btn" data-layout="hsplit">2h</button>
-    <button class="layout-btn" data-layout="vsplit">2v</button>
-    <button class="layout-btn" data-layout="quad">4</button>
-    <button class="layout-btn" data-layout="six">6</button>
-    <button class="layout-btn" data-layout="nine">9</button>
-    <button class="layout-btn" data-layout="twelve">12</button>
-    <button class="layout-btn" data-layout="sixteen">16</button>
-    <button class="layout-btn" data-layout="twenty">20</button>
+    <button class="layout-btn active" data-layout="single" aria-label="Single terminal">1</button>
+    <button class="layout-btn" data-layout="hsplit" aria-label="2 terminals horizontal">2h</button>
+    <button class="layout-btn" data-layout="vsplit" aria-label="2 terminals vertical">2v</button>
+    <button class="layout-btn" data-layout="quad" aria-label="4 terminals">4</button>
+    <button class="layout-btn" data-layout="six" aria-label="6 terminals">6</button>
+    <button class="layout-btn" data-layout="nine" aria-label="9 terminals">9</button>
+    <button class="layout-btn" data-layout="twelve" aria-label="12 terminals">12</button>
+    <button class="layout-btn" data-layout="sixteen" aria-label="16 terminals">16</button>
+    <button class="layout-btn" data-layout="twenty" aria-label="20 terminals">20</button>
     <div class="pane-indicators" id="pane-indicators"></div>
     <span class="shortcut-hint">Ctrl+Shift+N: cycle focus</span>
   </div>
-  <div id="pane-container" class="layout-single"></div>
-  <div id="status">Loading...</div>
+  <div id="pane-container" class="layout-single" role="main" aria-label="Terminal panes"></div>
+  <div id="status" aria-live="polite">Loading...</div>
 
   <script src="/static/lib/xterm.js"></script>
   <script src="/static/lib/addon-fit.js"></script>
@@ -263,21 +265,25 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: this.sessionId, input: input })
-          });
+          }).catch(err => console.warn('Input send failed:', err));
         });
       }
 
       async sendResize() {
         if (!this.sessionId || !this.term) return;
-        await fetch('/api/resize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: this.sessionId,
-            cols: this.term.cols,
-            rows: this.term.rows
-          })
-        });
+        try {
+          await fetch('/api/resize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: this.sessionId,
+              cols: this.term.cols,
+              rows: this.term.rows
+            })
+          });
+        } catch (err) {
+          console.warn('Resize failed:', err);
+        }
       }
 
       fit() {
