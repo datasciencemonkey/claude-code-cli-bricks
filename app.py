@@ -838,6 +838,11 @@ def create_session():
         # Remove Claude Code env vars so the browser terminal isn't seen as nested
         shell_env.pop("CLAUDECODE", None)
         shell_env.pop("CLAUDE_CODE_SESSION", None)
+        # Remove OAuth M2M vars when PAT is set — Databricks SDK rejects
+        # ambiguous auth ("more than one authorization method configured").
+        if shell_env.get("DATABRICKS_TOKEN"):
+            shell_env.pop("DATABRICKS_CLIENT_ID", None)
+            shell_env.pop("DATABRICKS_CLIENT_SECRET", None)
         # Ensure HOME is set correctly
         if not shell_env.get("HOME") or shell_env["HOME"] == "/":
             shell_env["HOME"] = "/app/python/source_code"
