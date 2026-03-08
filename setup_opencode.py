@@ -164,6 +164,7 @@ if not opencode_bin.exists():
     # Databricks SDK to reject with "more than one authorization method".
     opencode_bin.write_text(
         "#!/bin/sh\n"
+        "cd \"$HOME\" 2>/dev/null || true\n"
         "unset DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET\n"
         'exec "$(dirname "$0")/_opencode_real" "$@"\n'
     )
@@ -184,6 +185,7 @@ else:
         _shutil.move(str(opencode_bin), str(opencode_real))
         opencode_bin.write_text(
             "#!/bin/sh\n"
+            "cd \"$HOME\" 2>/dev/null || true\n"
             "unset DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET\n"
             'exec "$(dirname "$0")/_opencode_real" "$@"\n'
         )
