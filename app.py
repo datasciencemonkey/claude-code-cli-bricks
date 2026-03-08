@@ -383,8 +383,8 @@ def cleanup_stale_sessions():
 @app.before_request
 def authorize_request():
     """Check authorization before processing any request."""
-    # Skip auth for health check and setup status
-    if request.path in ("/health", "/api/setup-status"):
+    # Skip auth for health check, setup status, and config
+    if request.path in ("/health", "/api/setup-status", "/api/config"):
         return None
 
     authorized, user = check_authorization()
@@ -438,6 +438,14 @@ def health():
 @app.route("/api/version")
 def get_version():
     return jsonify({"version": APP_VERSION})
+
+
+@app.route("/api/config")
+def get_config():
+    poll_mode = os.environ.get("POLL_MODE", "default")
+    if poll_mode not in ("default", "batch"):
+        poll_mode = "default"
+    return jsonify({"poll_mode": poll_mode})
 
 
 @app.route("/api/session", methods=["POST"])

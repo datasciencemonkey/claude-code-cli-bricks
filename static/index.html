@@ -1474,11 +1474,18 @@
     // ── Init ───────────────────────────────────────────────────────
     async function init() {
       try {
-        // Fetch version inside async init() to avoid top-level await
+        // Fetch version and config inside async init() to avoid top-level await
         try {
           const vResp = await fetch('/api/version');
           if (vResp.ok) { const vData = await vResp.json(); appVersion = vData.version || appVersion; }
         } catch(e) { /* fallback */ }
+        try {
+          const cResp = await fetch('/api/config');
+          if (cResp.ok) {
+            const cData = await cResp.json();
+            pollWorker.postMessage({ type: 'init', pollMode: cData.poll_mode || 'default' });
+          }
+        } catch(e) { /* fallback to default */ }
 
         status.textContent = 'Initializing terminal...';
 

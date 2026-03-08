@@ -15,5 +15,7 @@ env:
   #OPTIONAL: Move to the new Databricks Gateway if you have access (recommended), otherwise it will default to the older endpoint
   - name: DATABRICKS_GATEWAY_HOST
     valueFrom: DATABRICKS_GATEWAY_HOST
+  - name: POLL_MODE
+    value: default
   - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY
     value: 0
