@@ -7,7 +7,7 @@ venv/
 outstanding-todos.md
 
 # Workspace-specific config (use app.yaml.template)
-# app.yaml
+app.yaml
 
 # Git worktrees
 .worktrees/

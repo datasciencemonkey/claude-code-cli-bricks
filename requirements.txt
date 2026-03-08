@@ -1,5 +1,5 @@
-flask>=2.0
-claude-agent-sdk
-databricks-sdk>=0.20.0
-mlflow[genai]>=3.4
-opentelemetry-exporter-otlp-proto-grpc
+flask~=3.1
+claude-agent-sdk~=0.1
+databricks-sdk~=0.96
+mlflow[genai]~=3.10
+opentelemetry-exporter-otlp-proto-grpc~=1.40
