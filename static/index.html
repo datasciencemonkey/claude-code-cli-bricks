@@ -277,6 +277,8 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ session_id: this.sessionId, input: input })
+            }).then(resp => resp.json()).then(data => {
+              if (data.output) this.writeOutput(data.output);
             }).catch(err => console.warn('Input send failed:', err));
           }
         });

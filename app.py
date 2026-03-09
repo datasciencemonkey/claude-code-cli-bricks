@@ -948,7 +948,12 @@ def create_session():
 
 @app.route("/api/input", methods=["POST"])
 def send_input():
-    """Send input to the terminal."""
+    """Send input to the terminal and return any immediate output.
+
+    Writes input to the PTY, waits briefly for the echo/response, and returns
+    any available output in the same response.  This halves the perceived
+    keystroke latency by combining two HTTP round-trips into one.
+    """
     data = request.json
     session_id = data.get("session_id")
     input_data = data.get("input", "")
@@ -960,12 +965,29 @@ def send_input():
             return jsonify({"error": "Session not found"}), 404
 
         fd = sessions[session_id]["master_fd"]
+        sessions[session_id]["last_poll_time"] = time.time()
 
     try:
         os.write(fd, input_data.encode())
-        return jsonify({"status": "ok"})
     except OSError as e:
         return jsonify({"error": str(e)}), 500
+
+    # Wait briefly for PTY to echo, then drain the output buffer.
+    # The reader thread appends output asynchronously; a short sleep
+    # lets it capture the echo before we drain.
+    time.sleep(0.005)  # 5ms — enough for local PTY echo
+
+    with sessions_lock:
+        if session_id not in sessions:
+            return jsonify({"status": "ok", "output": ""})
+        session = sessions[session_id]
+        session["last_poll_time"] = time.time()
+        buffer = session["output_buffer"]
+        output = "".join(buffer)
+        buffer.clear()
+        exited = session.get("exited", False)
+
+    return jsonify({"status": "ok", "output": output, "exited": exited})
 
 
 @app.route("/api/upload", methods=["POST"])
