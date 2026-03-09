@@ -192,17 +192,42 @@ else:
         opencode_bin.chmod(0o755)
         logger.info(f"  Converted to wrapper pattern: {opencode_bin}")
 
-# 2. Write minimal opencode.json config
+# 2. Write opencode.json config with MCP servers
 # The fork's native Databricks provider auto-discovers models from serving endpoints
 # and handles auth via DATABRICKS_TOKEN env var / ~/.databrickscfg / SDK credential chain.
-# We just need to enable the provider and set a default model.
 opencode_config_dir = home / ".config" / "opencode"
 opencode_config_dir.mkdir(parents=True, exist_ok=True)
+
+# Databricks MCP server paths (installed by setup_databricks_mcp.py in parallel)
+ai_dev_kit_dir = home / ".ai-dev-kit"
+dbx_mcp_python = str(ai_dev_kit_dir / ".venv" / "bin" / "python")
+dbx_mcp_server = str(ai_dev_kit_dir / "repo" / "databricks-mcp-server" / "run_server.py")
 
 opencode_config = {
     "$schema": "https://opencode.ai/config.json",
     "enabled_providers": ["databricks"],
     "model": f"databricks/{anthropic_model}",
+    "mcp": {
+        "deepwiki": {
+            "type": "remote",
+            "url": "https://mcp.deepwiki.com/mcp",
+            "enabled": True,
+        },
+        "exa": {
+            "type": "remote",
+            "url": "https://mcp.exa.ai/mcp",
+            "enabled": True,
+        },
+        "databricks": {
+            "type": "local",
+            "command": [dbx_mcp_python, dbx_mcp_server],
+            "environment": {
+                "DATABRICKS_HOST": host,
+                "DATABRICKS_TOKEN": token,
+            },
+            "enabled": True,
+        },
+    },
 }
 
 config_path = opencode_config_dir / "opencode.json"
@@ -210,6 +235,7 @@ config_path.write_text(json.dumps(opencode_config, indent=2))
 logger.info(f"OpenCode configured: {config_path}")
 logger.info("  Provider: databricks (native, auto-discovers models)")
 logger.info(f"  Default model: databricks/{anthropic_model}")
+logger.info("  MCP servers: deepwiki, exa, databricks")
 
 logger.info(f"OpenCode ready! Default model: {anthropic_model}")
 logger.info("  opencode                          # Start OpenCode TUI")

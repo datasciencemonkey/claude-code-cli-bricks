@@ -230,9 +230,11 @@ def _update_all_token_files(old_token: str, new_token: str):
 
     config_files = [
         home / ".claude" / "settings.json",  # ANTHROPIC_AUTH_TOKEN
+        home / ".claude.json",  # databricks MCP server DATABRICKS_TOKEN
         home / ".gemini" / ".env",  # GEMINI_API_KEY
         home / ".codex" / ".env",  # OPENAI_API_KEY
         home / ".local" / "share" / "opencode" / "auth.json",  # api_key
+        home / ".config" / "opencode" / "opencode.json",  # MCP server DATABRICKS_TOKEN
         home / ".databrickscfg",  # token
     ]
 

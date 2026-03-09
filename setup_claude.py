@@ -54,11 +54,25 @@ settings_path = claude_dir / "settings.json"
 settings_path.write_text(json.dumps(settings, indent=2))
 
 # 2. Write ~/.claude.json with onboarding skip AND MCP servers
+# Databricks MCP server paths (installed by setup_databricks_mcp.py in parallel)
+ai_dev_kit_dir = home / ".ai-dev-kit"
+dbx_mcp_python = str(ai_dev_kit_dir / ".venv" / "bin" / "python")
+dbx_mcp_server = str(ai_dev_kit_dir / "repo" / "databricks-mcp-server" / "run_server.py")
+
 claude_json = {
     "hasCompletedOnboarding": True,
     "mcpServers": {
         "deepwiki": {"type": "http", "url": "https://mcp.deepwiki.com/mcp"},
         "exa": {"type": "http", "url": "https://mcp.exa.ai/mcp"},
+        "databricks": {
+            "command": dbx_mcp_python,
+            "args": [dbx_mcp_server],
+            "defer_loading": True,
+            "env": {
+                "DATABRICKS_HOST": databricks_host or "",
+                "DATABRICKS_TOKEN": auth_token or "",
+            },
+        },
     },
 }
 

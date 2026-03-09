@@ -132,6 +132,14 @@ setup_state = {
             "error": None,
         },
         {
+            "id": "databricks_mcp",
+            "label": "Installing Databricks MCP server",
+            "status": "pending",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        },
+        {
             "id": "mlflow",
             "label": "Enabling MLflow tracing",
             "status": "pending",
@@ -557,12 +565,13 @@ def run_setup():
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [
-        ("claude",     [py, "setup_claude.py"]),
-        ("codex",      [py, "setup_codex.py"]),
-        ("opencode",   [py, "setup_opencode.py"]),
-        ("gemini",     [py, "setup_gemini.py"]),
-        ("databricks", [py, "setup_databricks.py"]),
-        ("mlflow",     [py, "setup_mlflow.py"]),
+        ("claude",         [py, "setup_claude.py"]),
+        ("codex",          [py, "setup_codex.py"]),
+        ("opencode",       [py, "setup_opencode.py"]),
+        ("gemini",         [py, "setup_gemini.py"]),
+        ("databricks",     [py, "setup_databricks.py"]),
+        ("databricks_mcp", [py, "setup_databricks_mcp.py"]),
+        ("mlflow",         [py, "setup_mlflow.py"]),
     ]
 
     with ThreadPoolExecutor(max_workers=len(parallel_steps)) as executor:
