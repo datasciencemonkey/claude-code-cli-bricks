@@ -879,7 +879,7 @@
 
     // ── WebSocket Connection (AC-10, AC-11, AC-14) ────────────────
     let socket = null;
-    let wsConnected = false;
+    let wsConnected = false;   // true only when real WebSocket transport is active
     let wsHeartbeatTimer = null;
     const WS_HEARTBEAT_INTERVAL = 30000; // 30s — well within 5-min session timeout
 
