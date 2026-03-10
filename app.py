@@ -83,6 +83,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -252,10 +253,36 @@ def run_setup():
     _run_step("micro", ["bash", "-c",
         "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
 
+    _run_step(
+        "gh",
+        [
+            "bash",
+            "-c",
+            'GH_VERSION="2.74.1" && '
+            "mkdir -p ~/.local/bin && "
+            'curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz && '
+            "tar -xzf /tmp/gh.tar.gz -C /tmp && "
+            "mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && "
+            "rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_amd64 && "
+            "chmod +x ~/.local/bin/gh && "
+            "gh config set git_protocol https 2>/dev/null || true && "
+            # Wrap gh auth login to skip interactive prompts (arrow-key menus break in xterm.js PTY)
+            "printf '#!/bin/bash\\n"
+            'if [ "$1" = "auth" ] && [ "$2" = "login" ]; then\\n'
+            "    shift 2\\n"
+            '    printf "Y\\\\n" | ~/.local/bin/gh.real auth login -h github.com -p https -w --skip-ssh-key "$@"\\n'
+            "fi\\n"
+            'exec ~/.local/bin/gh.real "$@"\\n\' > ~/.local/bin/gh.wrapper && '
+            "mv ~/.local/bin/gh ~/.local/bin/gh.real && "
+            "mv ~/.local/bin/gh.wrapper ~/.local/bin/gh && "
+            "chmod +x ~/.local/bin/gh",
+        ],
+    )
+
     # --- Content-filter proxy (must be running before OpenCode starts) ---
     # Sanitizes requests/responses between OpenCode and Databricks
     # (see OpenCode #5028, docs/plans/2026-03-11-litellm-empty-content-blocks-design.md)
-    _run_step("proxy", ["python", "setup_proxy.py"])
+    _run_step("proxy", ["uv", "run", "python", "setup_proxy.py"])
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [
@@ -487,7 +514,7 @@ def read_pty_output(session_id, fd):
             if session_id not in sessions:
                 break
         try:
-            readable, _, errors = select.select([fd], [], [fd], 0.5)
+            readable, _, errors = select.select([fd], [], [fd], 0.05)
             if readable or errors:
                 output = os.read(fd, 4096)
                 if not output:
