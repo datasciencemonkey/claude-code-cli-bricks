@@ -3,26 +3,248 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Coding Agents Spawner</title>
+  <title>Coding Agents | Databricks</title>
   <style>
-    body { background: #1a1a2e; color: #eee; font-family: sans-serif; text-align: center; padding: 60px; }
-    button { padding: 16px 48px; font-size: 18px; cursor: pointer; background: #4CAF50; color: #fff; border: none; border-radius: 8px; }
-    button:hover { background: #45a049; }
-    #status { margin-top: 20px; white-space: pre-wrap; text-align: left; max-width: 600px; margin-left: auto; margin-right: auto; }
+    :root {
+      --dbx-red: #FF3621;
+      --dbx-red-hover: #E02E1B;
+      --dbx-red-light: rgba(255, 54, 33, 0.1);
+      --dbx-dark: #0D1117;
+      --dbx-surface: #161B22;
+      --dbx-surface-2: #1C2128;
+      --dbx-border: #2D333B;
+      --dbx-text: #E6EDF3;
+      --dbx-text-muted: #8B949E;
+      --dbx-green: #3FB950;
+      --dbx-yellow: #D29922;
+      --dbx-error: #F85149;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--dbx-dark);
+      color: var(--dbx-text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      background: var(--dbx-surface);
+      border-bottom: 1px solid var(--dbx-border);
+      padding: 12px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 12px; }
+    .dbx-logo {
+      width: 32px; height: 32px;
+      background: var(--dbx-red);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .dbx-logo svg { width: 20px; height: 20px; }
+    .topbar-title { font-size: 15px; font-weight: 600; }
+    .topbar-user { font-size: 13px; color: var(--dbx-text-muted); }
+
+    .main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+
+    .hero { margin-bottom: 40px; }
+    .hero h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    .hero p { color: var(--dbx-text-muted); font-size: 15px; line-height: 1.5; }
+
+    .card {
+      background: var(--dbx-surface);
+      border: 1px solid var(--dbx-border);
+      border-radius: 10px;
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      font-size: 16px; font-weight: 600; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-header .badge {
+      font-size: 11px; font-weight: 500;
+      background: var(--dbx-red-light); color: var(--dbx-red);
+      padding: 2px 8px; border-radius: 10px;
+    }
+
+    label { display: block; font-size: 13px; font-weight: 500; color: var(--dbx-text-muted); margin-bottom: 6px; }
+    input[type="password"] {
+      width: 100%; padding: 10px 14px; font-size: 14px;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      background: var(--dbx-dark); border: 1px solid var(--dbx-border);
+      border-radius: 6px; color: var(--dbx-text); outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="password"]:focus { border-color: var(--dbx-red); }
+    input[type="password"]::placeholder { color: #484F58; }
+    .field-help { font-size: 12px; color: var(--dbx-text-muted); margin-top: 6px; line-height: 1.4; }
+    .field-help strong { color: var(--dbx-text); }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px 24px; font-size: 15px; font-weight: 600;
+      color: #fff; background: var(--dbx-red); border: none; border-radius: 6px;
+      cursor: pointer; transition: background 0.15s; margin-top: 20px;
+    }
+    .btn-primary:hover { background: var(--dbx-red-hover); }
+    .btn-primary:disabled { background: #2D333B; color: #484F58; cursor: not-allowed; }
+    .btn-primary svg { width: 18px; height: 18px; fill: currentColor; }
+
+    #status {
+      margin-top: 20px; font-size: 13px;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      background: var(--dbx-dark); border: 1px solid var(--dbx-border);
+      border-radius: 6px; padding: 16px; white-space: pre-wrap;
+      display: none; line-height: 1.6;
+    }
+    .status-success { color: var(--dbx-green); border-color: rgba(63,185,80,0.3); }
+    .status-error { color: var(--dbx-error); border-color: rgba(248,81,73,0.3); }
+    .status-progress { color: var(--dbx-text-muted); }
+    .status-success a { color: var(--dbx-green); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      text-align: left; padding: 10px 12px; font-weight: 600; font-size: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--dbx-text-muted); border-bottom: 1px solid var(--dbx-border);
+    }
+    tbody td { padding: 10px 12px; border-bottom: 1px solid rgba(45,51,59,0.5); }
+    tbody tr:hover { background: var(--dbx-surface-2); }
+    td a { color: var(--dbx-red); text-decoration: none; font-weight: 500; }
+    td a:hover { text-decoration: underline; }
+    .state-running { color: var(--dbx-green); font-weight: 500; }
+    .state-other { color: var(--dbx-yellow); }
+    .empty-state { color: var(--dbx-text-muted); text-align: center; padding: 24px; }
+
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <h1>Coding Agents Spawner</h1>
-  <p>Click Deploy to provision your personal coding agents app.</p>
-  <button onclick="deploy()">Deploy</button>
-  <div id="status"></div>
-  <script>
-    async function deploy() {
-      document.getElementById('status').innerText = 'Provisioning...';
-      const resp = await fetch('/api/provision', { method: 'POST' });
-      const data = await resp.json();
-      document.getElementById('status').innerText = JSON.stringify(data, null, 2);
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="dbx-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <span class="topbar-title">Coding Agents</span>
+  </div>
+  <span class="topbar-user" id="user-email"></span>
+</div>
+
+<div class="main">
+  <div class="hero">
+    <h1>Deploy Your Coding Agent</h1>
+    <p>Get a personal AI-powered coding environment on Databricks. Paste your Personal Access Token below and we'll provision everything for you.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      Setup
+      <span class="badge">One-time</span>
+    </div>
+    <label for="pat">Personal Access Token</label>
+    <input type="password" id="pat" placeholder="dapi..." autocomplete="off" />
+    <p class="field-help">
+      Create a PAT at <strong>Settings &rarr; Developer &rarr; Access tokens</strong> with all access scopes.<br>
+      Your app will be named <strong id="app-name-preview"></strong>.
+    </p>
+    <button class="btn-primary" id="btn" onclick="deploy()">
+      <svg viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Deploy My Coding Agent
+    </button>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Spawned Apps</div>
+    <div id="apps-loading" class="empty-state">Loading...</div>
+    <table id="apps-table" style="display:none;">
+      <thead><tr><th>App</th><th>Owner</th><th>State</th><th>Created</th></tr></thead>
+      <tbody id="apps-body"></tbody>
+    </table>
+    <div id="apps-empty" style="display:none;" class="empty-state">No apps have been spawned yet.</div>
+  </div>
+</div>
+
+<script>
+const userEmail = document.body.getAttribute('data-email') || 'unknown';
+const appName = document.body.getAttribute('data-app-name') || 'coding-agents-you';
+document.getElementById('user-email').textContent = userEmail;
+document.getElementById('app-name-preview').textContent = appName;
+
+async function deploy() {
+  const pat = document.getElementById('pat').value.trim();
+  if (!pat) { alert('Please enter your Personal Access Token.'); return; }
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Provisioning...';
+  status.style.display = 'block';
+  status.className = 'status-progress';
+  status.textContent = 'Starting provisioning...';
+  try {
+    const resp = await fetch('/api/provision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pat: pat })
+    });
+    const data = await resp.json();
+    if (data.success) {
+      status.className = 'status-success';
+      status.innerHTML = '\u2713 Deployed successfully!\n\n'
+        + 'App: ' + data.app_name + '\n'
+        + 'URL: <a href="' + data.app_url + '">' + data.app_url + '</a>\n\n'
+        + data.steps.map(s => s.step + '. ' + (s.message || s.status)).join('\n');
+      loadApps();
+    } else {
+      status.className = 'status-error';
+      status.textContent = 'Failed at step ' + data.error.step + ' (' + data.error.status + '):\n' + data.error.message;
     }
-  </script>
+  } catch (e) {
+    status.className = 'status-error';
+    status.textContent = 'Request failed: ' + e.message;
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Deploy My Coding Agent';
+}
+
+async function loadApps() {
+  try {
+    const resp = await fetch('/api/apps');
+    const data = await resp.json();
+    document.getElementById('apps-loading').style.display = 'none';
+    if (!data.apps || data.apps.length === 0) {
+      document.getElementById('apps-empty').style.display = 'block';
+      document.getElementById('apps-table').style.display = 'none';
+      return;
+    }
+    const tbody = document.getElementById('apps-body');
+    tbody.innerHTML = '';
+    data.apps.forEach(a => {
+      const stateClass = a.state === 'RUNNING' ? 'state-running' : 'state-other';
+      const created = a.created ? new Date(a.created).toLocaleDateString() : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><a href="' + a.url + '" target="_blank">' + a.name + '</a></td>'
+        + '<td>' + a.creator + '</td>'
+        + '<td class="' + stateClass + '">' + a.state + '</td>'
+        + '<td>' + created + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('apps-empty').style.display = 'none';
+    document.getElementById('apps-table').style.display = 'table';
+  } catch(e) {
+    document.getElementById('apps-loading').textContent = 'Failed to load apps.';
+  }
+}
+loadApps();
+</script>
 </body>
 </html>

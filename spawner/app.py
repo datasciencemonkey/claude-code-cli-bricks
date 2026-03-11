@@ -229,132 +229,22 @@ def provision_app(host: str, admin_token: str, pat_value: str) -> dict:
 
 @app.route("/")
 def index():
-    """Serve the spawner UI with PAT input and deploy button."""
+    """Serve the spawner UI with user context injected via data attributes."""
+    import html as html_mod
+
     email = request.headers.get("X-Forwarded-Email", "unknown")
     app_name = app_name_from_email(email) if email != "unknown" else "coding-agents-you"
-    return f"""<!DOCTYPE html>
-<html>
-<head><title>Coding Agents Spawner</title>
-<style>
-  body {{ background:#1a1a2e; color:#eee; font-family:sans-serif; text-align:center; padding:40px 20px; }}
-  .container {{ max-width:520px; margin:0 auto; }}
-  h1 {{ margin-bottom:8px; }}
-  .subtitle {{ color:#aaa; margin-bottom:32px; }}
-  label {{ display:block; text-align:left; margin-bottom:6px; font-size:14px; color:#ccc; }}
-  input {{ width:100%; padding:12px; font-size:14px; border:1px solid #444; border-radius:6px;
-           background:#2a2a4a; color:#eee; box-sizing:border-box; font-family:monospace; }}
-  input:focus {{ outline:none; border-color:#4CAF50; }}
-  .help {{ text-align:left; font-size:12px; color:#888; margin-top:4px; margin-bottom:20px; }}
-  button {{ padding:14px 48px; font-size:16px; cursor:pointer; background:#4CAF50; color:#fff;
-            border:none; border-radius:8px; width:100%; }}
-  button:hover {{ background:#45a049; }}
-  button:disabled {{ background:#555; cursor:not-allowed; }}
-  #status {{ margin-top:24px; text-align:left; white-space:pre-wrap; font-size:13px;
-             font-family:monospace; background:#0d0d1a; padding:16px; border-radius:8px; display:none; }}
-  .success {{ color:#4CAF50; }}
-  .error {{ color:#ff6b6b; }}
-  .step {{ color:#aaa; }}
-  .apps-section {{ margin-top:48px; text-align:left; }}
-  .apps-section h2 {{ font-size:18px; margin-bottom:12px; }}
-  table {{ width:100%; border-collapse:collapse; font-size:13px; }}
-  th {{ text-align:left; padding:8px; border-bottom:2px solid #444; color:#aaa; font-weight:600; }}
-  td {{ padding:8px; border-bottom:1px solid #333; }}
-  td a {{ color:#4CAF50; text-decoration:none; }}
-  td a:hover {{ text-decoration:underline; }}
-  .state-running {{ color:#4CAF50; }}
-  .state-other {{ color:#f0ad4e; }}
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>Coding Agents Spawner</h1>
-  <p class="subtitle">Logged in as <strong>{email}</strong></p>
 
-  <label for="pat">Personal Access Token</label>
-  <input type="password" id="pat" placeholder="dapi..." autocomplete="off" />
-  <p class="help">
-    Create a PAT at Settings &rarr; Developer &rarr; Access tokens.<br>
-    Your app will be named <strong>{app_name}</strong>.
-  </p>
+    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    with open(index_path) as f:
+        page = f.read()
 
-  <button id="btn" onclick="deploy()">Deploy My Coding Agent</button>
-  <div id="status"></div>
-
-  <div class="apps-section">
-    <h2>Spawned Apps</h2>
-    <div id="apps-loading" style="color:#888;">Loading...</div>
-    <table id="apps-table" style="display:none;">
-      <thead><tr><th>App</th><th>Owner</th><th>State</th><th>Created</th></tr></thead>
-      <tbody id="apps-body"></tbody>
-    </table>
-    <div id="apps-empty" style="display:none; color:#888;">No apps spawned yet.</div>
-  </div>
-</div>
-<script>
-async function deploy() {{
-  const pat = document.getElementById('pat').value.trim();
-  if (!pat) {{ alert('Please enter your Personal Access Token.'); return; }}
-  const btn = document.getElementById('btn');
-  const status = document.getElementById('status');
-  btn.disabled = true;
-  btn.textContent = 'Provisioning...';
-  status.style.display = 'block';
-  status.className = 'step';
-  status.textContent = 'Starting provisioning...';
-  try {{
-    const resp = await fetch('/api/provision', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ pat: pat }})
-    }});
-    const data = await resp.json();
-    if (data.success) {{
-      status.className = 'success';
-      status.innerHTML = '&#10003; Deployed successfully!\\n\\n'
-        + 'App: ' + data.app_name + '\\n'
-        + 'URL: <a href="' + data.app_url + '" style="color:#4CAF50">' + data.app_url + '</a>\\n\\n'
-        + data.steps.map(s => s.step + '. ' + (s.message || s.status)).join('\\n');
-    }} else {{
-      status.className = 'error';
-      status.textContent = 'Failed at step ' + data.error.step + ' (' + data.error.status + '):\\n' + data.error.message;
-    }}
-  }} catch (e) {{
-    status.className = 'error';
-    status.textContent = 'Request failed: ' + e.message;
-  }}
-  btn.disabled = false;
-  btn.textContent = 'Deploy My Coding Agent';
-}}
-
-async function loadApps() {{
-  try {{
-    const resp = await fetch('/api/apps');
-    const data = await resp.json();
-    document.getElementById('apps-loading').style.display = 'none';
-    if (!data.apps || data.apps.length === 0) {{
-      document.getElementById('apps-empty').style.display = 'block';
-      return;
-    }}
-    const tbody = document.getElementById('apps-body');
-    data.apps.forEach(a => {{
-      const stateClass = a.state === 'RUNNING' ? 'state-running' : 'state-other';
-      const created = a.created ? new Date(a.created).toLocaleDateString() : '';
-      tbody.innerHTML += '<tr>'
-        + '<td><a href="' + a.url + '" target="_blank">' + a.name + '</a></td>'
-        + '<td>' + a.creator + '</td>'
-        + '<td class="' + stateClass + '">' + a.state + '</td>'
-        + '<td>' + created + '</td>'
-        + '</tr>';
-    }});
-    document.getElementById('apps-table').style.display = 'table';
-  }} catch(e) {{
-    document.getElementById('apps-loading').textContent = 'Failed to load apps.';
-  }}
-}}
-loadApps();
-</script>
-</body>
-</html>"""
+    # Inject user context as data attributes on <body>
+    page = page.replace(
+        "<body>",
+        f'<body data-email="{html_mod.escape(email)}" data-app-name="{html_mod.escape(app_name)}">',
+    )
+    return page
 
 
 @app.route("/health")
