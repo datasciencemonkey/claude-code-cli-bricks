@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coding Agents Spawner</title>
+  <style>
+    body { background: #1a1a2e; color: #eee; font-family: sans-serif; text-align: center; padding: 60px; }
+    button { padding: 16px 48px; font-size: 18px; cursor: pointer; background: #4CAF50; color: #fff; border: none; border-radius: 8px; }
+    button:hover { background: #45a049; }
+    #status { margin-top: 20px; white-space: pre-wrap; text-align: left; max-width: 600px; margin-left: auto; margin-right: auto; }
+  </style>
+</head>
+<body>
+  <h1>Coding Agents Spawner</h1>
+  <p>Click Deploy to provision your personal coding agents app.</p>
+  <button onclick="deploy()">Deploy</button>
+  <div id="status"></div>
+  <script>
+    async function deploy() {
+      document.getElementById('status').innerText = 'Provisioning...';
+      const resp = await fetch('/api/provision', { method: 'POST' });
+      const data = await resp.json();
+      document.getElementById('status').innerText = JSON.stringify(data, null, 2);
+    }
+  </script>
+</body>
+</html>
