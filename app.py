@@ -83,7 +83,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
-        {"id": "litellm",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "opencode",   "label": "Configuring OpenCode CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -255,7 +255,7 @@ def run_setup():
     # --- Content-filter proxy (must be running before OpenCode starts) ---
     # Sanitizes requests/responses between OpenCode and Databricks
     # (see OpenCode #5028, docs/plans/2026-03-11-litellm-empty-content-blocks-design.md)
-    _run_step("litellm", ["python", "setup_litellm.py"])
+    _run_step("proxy", ["python", "setup_proxy.py"])
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [

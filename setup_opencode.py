@@ -15,7 +15,7 @@ from utils import ensure_https
 
 # content-filter proxy local proxy — sanitizes empty content blocks before reaching Databricks
 # (see https://github.com/sst/opencode/issues/5028)
-LITELLM_PROXY_URL = "http://127.0.0.1:4000"
+CONTENT_FILTER_PROXY_URL = "http://127.0.0.1:4000"
 
 # Set HOME if not properly set
 if not os.environ.get("HOME") or os.environ["HOME"] == "/":
@@ -95,7 +95,7 @@ if gateway_host:
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "Databricks AI Gateway (via content-filter proxy)",
                 "options": {
-                    "baseURL": LITELLM_PROXY_URL,
+                    "baseURL": CONTENT_FILTER_PROXY_URL,
                     "apiKey": "{env:DATABRICKS_TOKEN}"
                 },
                 "models": {
@@ -187,7 +187,7 @@ else:
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "Databricks Model Serving (via content-filter proxy)",
                 "options": {
-                    "baseURL": LITELLM_PROXY_URL,
+                    "baseURL": CONTENT_FILTER_PROXY_URL,
                     "apiKey": "{env:DATABRICKS_TOKEN}"
                 },
                 "models": {
