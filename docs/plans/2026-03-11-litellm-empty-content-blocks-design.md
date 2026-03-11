@@ -68,25 +68,35 @@ and forwards clean messages to Databricks AI Gateway.
 
 ### Architecture
 
+In the current setup, **OpenCode** talks directly to the **Databricks AI Gateway**.
+Because OpenCode sends malformed "empty text blocks," the Gateway rejects them
+immediately with a 400 error.
+
+By introducing **LiteLLM**, we change the traffic flow inside the container:
+
 ```
 Users → port 8000 (Flask/xterm.js UI)
               ↓ spawns PTY
        OpenCode → localhost:4000 (LiteLLM) → Databricks AI Gateway → Claude/Gemini
 ```
 
+1. **OpenCode** (the agent) sends the request to `http://localhost:4000` (the **LiteLLM Proxy**).
+2. **LiteLLM** intercepts the request *before* it leaves the container.
+3. **LiteLLM** applies the sanitization logic (stripping the `{"type": "text", "text": ""}` blocks).
+4. **LiteLLM** then forwards the "cleaned" request to the **Databricks AI Gateway**.
+5. **Databricks** receives a perfectly valid request and processes it.
+
+So, while the traffic eventually reaches Databricks, it is "washed" by LiteLLM locally
+first. This ensures that the Databricks Gateway never sees the malformed data that causes
+it to throw an error.
+
 - **Port 8000** — Flask/Gunicorn (exposed to users via Databricks Apps)
 - **Port 4000** — LiteLLM proxy (internal only, never exposed externally)
 - Databricks Apps only routes external traffic to port 8000
 
-### What LiteLLM Does
-
-For every outbound request, LiteLLM strips:
-- Empty text blocks: `{"type": "text", "text": ""}`
-- Whitespace-only text blocks: `{"type": "text", "text": "   "}`
-
-This happens on **every request**, so even if OpenCode's conversation history is corrupted,
-LiteLLM cleans it before it reaches Databricks. When upstream OpenCode eventually fixes
-#5028, LiteLLM becomes a no-op (nothing to strip) — it degrades gracefully.
+When upstream OpenCode eventually fixes #5028, LiteLLM becomes a no-op (nothing to
+strip) — it degrades gracefully. At that point, remove `setup_litellm.py`, revert the
+baseURL in `setup_opencode.py`, and drop the dependency.
 
 ### Implementation Plan
 
