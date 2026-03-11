@@ -162,6 +162,19 @@ if gateway_host:
                 }
             }
         },
+        "mcp": {
+            "deepwiki": {
+                "type": "remote",
+                "url": "https://mcp.deepwiki.com/sse",
+                "enabled": True,
+                "oauth": False
+            },
+            "exa": {
+                "type": "remote",
+                "url": "https://mcp.exa.ai/mcp",
+                "enabled": True
+            }
+        },
         "model": f"databricks/{anthropic_model}"
     }
 else:
@@ -214,6 +227,19 @@ else:
                         }
                     },
                 }
+            }
+        },
+        "mcp": {
+            "deepwiki": {
+                "type": "remote",
+                "url": "https://mcp.deepwiki.com/sse",
+                "enabled": True,
+                "oauth": False
+            },
+            "exa": {
+                "type": "remote",
+                "url": "https://mcp.exa.ai/mcp",
+                "enabled": True
             }
         },
         "model": f"databricks/{anthropic_model}"
