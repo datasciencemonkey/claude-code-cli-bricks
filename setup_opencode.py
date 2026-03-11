@@ -64,6 +64,17 @@ if not opencode_bin.exists():
         print(f"OpenCode CLI installed to {opencode_bin}")
     else:
         print(f"OpenCode install warning: {result.stderr}")
+
+    # Install @ai-sdk/openai for GPT models (Responses API support)
+    result = subprocess.run(
+        ["npm", "install", "-g", f"--prefix={npm_prefix}", "@ai-sdk/openai"],
+        capture_output=True, text=True,
+        env={**os.environ, "HOME": str(home)}
+    )
+    if result.returncode == 0:
+        print("@ai-sdk/openai installed (Responses API support)")
+    else:
+        print(f"@ai-sdk/openai install warning: {result.stderr}")
 else:
     print(f"OpenCode CLI already installed at {opencode_bin}")
 
