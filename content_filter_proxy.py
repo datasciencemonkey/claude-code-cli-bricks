@@ -38,6 +38,59 @@ logging.basicConfig(
 )
 log = logging.getLogger("proxy")
 
+# JSON Schema keywords that Gemini doesn't support
+GEMINI_UNSUPPORTED_SCHEMA_KEYS = {
+    "$schema", "$ref", "$defs", "$id", "$comment", "additionalProperties",
+}
+
+# Top-level request fields that Gemini doesn't support
+GEMINI_UNSUPPORTED_REQUEST_KEYS = {
+    "stream_options",
+}
+
+
+# ---------------------------------------------------------------------------
+# Gemini compatibility
+# ---------------------------------------------------------------------------
+
+def strip_unsupported_schema_keys(obj):
+    """Recursively strip JSON Schema keywords that Gemini doesn't support."""
+    if isinstance(obj, dict):
+        return {
+            k: strip_unsupported_schema_keys(v)
+            for k, v in obj.items()
+            if k not in GEMINI_UNSUPPORTED_SCHEMA_KEYS
+        }
+    elif isinstance(obj, list):
+        return [strip_unsupported_schema_keys(item) for item in obj]
+    return obj
+
+
+def sanitize_for_gemini(data):
+    """Strip fields that Gemini's API rejects."""
+    model = data.get("model", "")
+    if "gemini" not in model.lower():
+        return data
+
+    log.info(f"Applying Gemini compatibility fixes for model: {model}")
+
+    # Strip unsupported schema keys from tool definitions
+    for tool in data.get("tools", []):
+        func = tool.get("function", {})
+        if "parameters" in func:
+            func["parameters"] = strip_unsupported_schema_keys(func["parameters"])
+
+    # Strip unsupported top-level fields
+    for key in GEMINI_UNSUPPORTED_REQUEST_KEYS:
+        if key in data:
+            log.info(f"  Stripped top-level field: {key}")
+            del data[key]
+
+    # Strip $schema from top level if present
+    data.pop("$schema", None)
+
+    return data
+
 
 # ---------------------------------------------------------------------------
 # Request-side sanitization
@@ -430,6 +483,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 after = len(data["messages"])
                 if before != after:
                     log.info(f"Messages: {before} -> {after}")
+            # Gemini compatibility: strip unsupported schema keys and fields
+            data = sanitize_for_gemini(data)
             body = json.dumps(data).encode()
         except (json.JSONDecodeError, KeyError) as e:
             log.warning(f"Could not parse request body: {e}")
