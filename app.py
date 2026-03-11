@@ -302,16 +302,33 @@ def get_request_user():
            request.headers.get("X-Databricks-User-Email")
 
 
+def _is_databricks_apps():
+    """Detect if we're running on Databricks Apps (not local dev)."""
+    return os.environ.get("DATABRICKS_APP_PORT") or os.path.isdir("/app/python/source_code")
+
+
 def check_authorization():
-    """Check if the current user is authorized to access the app."""
-    # If owner not set (local dev or SDK unavailable), allow access
+    """Check if the current user is authorized to access the app.
+
+    Fails CLOSED on Databricks Apps: if we can't determine the owner,
+    deny all access rather than allowing unauthenticated terminal access.
+    Fails open only for local development.
+    Fixes: https://github.com/datasciencemonkey/coding-agents-databricks-apps/issues/57
+    """
+    # Fail closed on Databricks Apps if owner couldn't be resolved
     if not app_owner:
-        return True, None
+        if _is_databricks_apps():
+            logger.error("SECURITY: app_owner not resolved — denying all access (fail-closed)")
+            return False, "unknown"
+        return True, None  # Local dev only
 
     current_user = get_request_user()
 
     # If no user identity in request (local dev), allow access
     if not current_user:
+        if _is_databricks_apps():
+            logger.warning("No user identity in request on Databricks Apps — denying access")
+            return False, "unknown"
         return True, None
 
     # Check if current user is the owner
