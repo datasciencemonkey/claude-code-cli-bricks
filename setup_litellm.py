@@ -10,6 +10,7 @@ Fixes known OpenCode bugs by sanitizing requests and responses:
 See docs/plans/2026-03-11-litellm-empty-content-blocks-design.md
 """
 import os
+import signal
 import sys
 import time
 import subprocess
@@ -29,6 +30,23 @@ if not os.environ.get("HOME") or os.environ["HOME"] == "/":
     os.environ["HOME"] = "/app/python/source_code"
 
 home = Path(os.environ["HOME"])
+
+# Kill any existing proxy (from previous deploy) before starting new one
+pid_path = home / ".content-filter-proxy.pid"
+if pid_path.exists():
+    try:
+        old_pid = int(pid_path.read_text().strip())
+        os.kill(old_pid, signal.SIGTERM)
+        time.sleep(1)
+        # Force kill if still running
+        try:
+            os.kill(old_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        print(f"Killed previous proxy (PID: {old_pid})")
+    except (ValueError, ProcessLookupError, PermissionError):
+        pass
+    pid_path.unlink(missing_ok=True)
 
 # Databricks configuration
 gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
