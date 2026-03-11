@@ -241,9 +241,17 @@ def _sanitize_single_pass(messages, pass_num):
                 log.info(f"  pass {pass_num}: strip orphaned tool msg[{i}] {tool_call_id} (prev_ids={prev_tool_ids})")
                 continue
 
-        # --- Handle empty string content ---
+        # --- Handle empty/null string content ---
+        elif content is None and role == "assistant" and not msg.get("tool_calls"):
+            # Assistant message with null content and no tool_calls — replace
+            log.info(f"  pass {pass_num}: replace null assistant content msg[{i}] with placeholder")
+            msg = {**msg, "content": "."}
         elif isinstance(content, str) and content.strip() == "":
-            if role != "assistant":
+            if role == "assistant":
+                # Can't drop assistant messages (breaks alternation), replace with minimal content
+                log.info(f"  pass {pass_num}: replace empty assistant string msg[{i}] with placeholder")
+                msg = {**msg, "content": "."}
+            else:
                 log.info(f"  pass {pass_num}: strip empty string {role} msg[{i}]")
                 continue
 
