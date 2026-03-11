@@ -17,6 +17,7 @@ See: https://github.com/sst/opencode/issues/5028
      https://github.com/BerriAI/litellm/pull/20384
 """
 import json
+import logging
 import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -28,50 +29,124 @@ UPSTREAM_BASE = os.environ.get("PROXY_UPSTREAM_BASE", "")
 LISTEN_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("PROXY_PORT", "4000"))
 
+# Diagnostic logging — writes to ~/.content-filter-proxy-debug.log
+_home = os.environ.get("HOME", "/app/python/source_code")
+logging.basicConfig(
+    filename=os.path.join(_home, ".content-filter-proxy-debug.log"),
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+)
+log = logging.getLogger("proxy")
+
 
 # ---------------------------------------------------------------------------
 # Request-side sanitization
 # ---------------------------------------------------------------------------
 
+def _extract_tool_ids_from_message(msg):
+    """Extract all tool_use/tool_call IDs from an assistant message."""
+    ids = set()
+    # Anthropic format: content blocks with type=tool_use
+    content = msg.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tid = block.get("id")
+                if tid:
+                    ids.add(tid)
+    # OpenAI format: tool_calls array
+    for tc in msg.get("tool_calls") or []:
+        tid = tc.get("id")
+        if tid:
+            ids.add(tid)
+    return ids
+
+
+def _extract_tool_refs_from_message(msg):
+    """Extract all tool_use_id/tool_call_id references from a user/tool message."""
+    refs = set()
+    role = msg.get("role", "")
+    content = msg.get("content")
+    # Anthropic format: tool_result blocks
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                ref = block.get("tool_use_id")
+                if ref:
+                    refs.add(ref)
+    # OpenAI format: tool messages
+    if role == "tool":
+        ref = msg.get("tool_call_id")
+        if ref:
+            refs.add(ref)
+    return refs
+
+
 def sanitize_messages(messages):
-    """Strip empty text blocks and orphaned tool_result/tool messages."""
+    """Strip empty text blocks and orphaned tool_result/tool messages.
+
+    Runs multiple passes to handle cascading orphans (dropping one message
+    can make the next one orphaned too).
+    """
     if not isinstance(messages, list):
         return messages
 
-    # First pass: collect tool_use/tool_call IDs per assistant message index
-    # so we can validate tool_results in the following user/tool message.
-    assistant_tool_ids = {}  # msg_index -> set of tool IDs
+    log.info(f"Sanitizing {len(messages)} messages")
+
+    # Log message structure for debugging
     for i, msg in enumerate(messages):
         role = msg.get("role", "")
-        if role != "assistant":
-            continue
-        ids = set()
-        # Anthropic format: content blocks with type=tool_use
+        tool_ids = _extract_tool_ids_from_message(msg)
+        tool_refs = _extract_tool_refs_from_message(msg)
         content = msg.get("content")
+        content_desc = ""
         if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tid = block.get("id")
-                    if tid:
-                        ids.add(tid)
-        # OpenAI format: tool_calls array
-        for tc in msg.get("tool_calls", []):
-            tid = tc.get("id")
-            if tid:
-                ids.add(tid)
-        assistant_tool_ids[i] = ids
+            types = [b.get("type", "?") if isinstance(b, dict) else "str" for b in content]
+            content_desc = f"[{', '.join(types)}]"
+        elif isinstance(content, str):
+            content_desc = f'str({len(content)} chars)'
+        elif content is None:
+            content_desc = "null"
+        extras = ""
+        if tool_ids:
+            extras += f" tool_ids={tool_ids}"
+        if tool_refs:
+            extras += f" tool_refs={tool_refs}"
+        if msg.get("tool_calls"):
+            extras += f" tool_calls={len(msg['tool_calls'])}"
+        log.info(f"  [{i}] {role}: {content_desc}{extras}")
 
-    # Second pass: clean messages
+    # Multi-pass sanitization (handles cascading orphans)
+    prev_len = -1
+    pass_num = 0
+    result = list(messages)
+
+    while len(result) != prev_len and pass_num < 5:
+        prev_len = len(result)
+        pass_num += 1
+        result = _sanitize_single_pass(result, pass_num)
+
+    stripped = len(messages) - len(result)
+    if stripped > 0:
+        log.info(f"Sanitization complete: stripped {stripped} messages/blocks in {pass_num} passes")
+
+    return result
+
+
+def _sanitize_single_pass(messages, pass_num):
+    """One pass of message sanitization."""
     cleaned = []
+
     for i, msg in enumerate(messages):
         role = msg.get("role", "")
         content = msg.get("content")
 
-        # Find the most recent preceding assistant message's tool IDs
+        # Build valid tool IDs from the most recent assistant message IN THE
+        # CLEANED list (not the original), so cascading drops are handled.
         prev_tool_ids = set()
-        for j in range(i - 1, -1, -1):
-            if messages[j].get("role") == "assistant":
-                prev_tool_ids = assistant_tool_ids.get(j, set())
+        for j in range(len(cleaned) - 1, -1, -1):
+            if cleaned[j].get("role") == "assistant":
+                prev_tool_ids = _extract_tool_ids_from_message(cleaned[j])
                 break
 
         # --- Handle list content (Anthropic format) ---
@@ -84,21 +159,23 @@ def sanitize_messages(messages):
 
                 # Strip empty/whitespace-only text blocks
                 if block.get("type") == "text" and block.get("text", "").strip() == "":
+                    log.info(f"  pass {pass_num}: strip empty text block from msg[{i}] ({role})")
                     continue
 
                 # Strip orphaned tool_result blocks
                 if block.get("type") == "tool_result":
                     tool_use_id = block.get("tool_use_id")
                     if tool_use_id and tool_use_id not in prev_tool_ids:
+                        log.info(f"  pass {pass_num}: strip orphaned tool_result {tool_use_id} from msg[{i}] (prev_ids={prev_tool_ids})")
                         continue
 
                 filtered.append(block)
 
             if not filtered:
-                # Don't drop assistant messages (would break alternation)
                 if role == "assistant":
                     msg = {**msg, "content": filtered}
                 else:
+                    log.info(f"  pass {pass_num}: drop empty {role} msg[{i}]")
                     continue
             else:
                 msg = {**msg, "content": filtered}
@@ -107,11 +184,13 @@ def sanitize_messages(messages):
         elif role == "tool":
             tool_call_id = msg.get("tool_call_id")
             if tool_call_id and tool_call_id not in prev_tool_ids:
-                continue  # Orphaned tool response
+                log.info(f"  pass {pass_num}: strip orphaned tool msg[{i}] {tool_call_id} (prev_ids={prev_tool_ids})")
+                continue
 
         # --- Handle empty string content ---
         elif isinstance(content, str) and content.strip() == "":
             if role != "assistant":
+                log.info(f"  pass {pass_num}: strip empty string {role} msg[{i}]")
                 continue
 
         cleaned.append(msg)
@@ -340,13 +419,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
 
+        log.info(f"POST {self.path} ({content_length} bytes)")
+
         # --- Sanitize request ---
         try:
             data = json.loads(body)
             if "messages" in data:
+                before = len(data["messages"])
                 data["messages"] = sanitize_messages(data["messages"])
+                after = len(data["messages"])
+                if before != after:
+                    log.info(f"Messages: {before} -> {after}")
             body = json.dumps(data).encode()
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError) as e:
+            log.warning(f"Could not parse request body: {e}")
             pass  # Forward as-is if not valid JSON
 
         # Build upstream URL
@@ -374,6 +460,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 stream=is_stream,
                 timeout=300,
             )
+
+            # Log upstream errors
+            if resp.status_code >= 400:
+                log.error(f"Upstream returned {resp.status_code}: {resp.text[:500]}")
 
             # --- Non-streaming response ---
             if not is_stream:
