@@ -34,7 +34,7 @@ jobs:
         run: |
           if [ -f requirements.lock ]; then
             echo "Auditing requirements.lock (pinned)..."
-            pip-audit -r requirements.lock --desc on
+            pip-audit -r requirements.lock --desc on --no-deps
           else
             echo "::warning::No requirements.lock found — auditing requirements.txt (unpinned)"
             pip-audit -r requirements.txt --desc on
