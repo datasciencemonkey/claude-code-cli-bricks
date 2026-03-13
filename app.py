@@ -21,6 +21,13 @@ import tomllib
 
 from utils import ensure_https
 
+# Sanitize DATABRICKS_TOKEN early — the platform sometimes injects trailing
+# newlines / whitespace which causes auth failures.  Cleaning it here prevents
+# the agent from "fixing" it in the terminal and leaking the raw token.
+_raw_token = os.environ.get("DATABRICKS_TOKEN", "")
+if _raw_token != _raw_token.strip():
+    os.environ["DATABRICKS_TOKEN"] = _raw_token.strip()
+
 # App version (single source of truth: pyproject.toml)
 _pyproject_file = os.path.join(os.path.dirname(__file__), 'pyproject.toml')
 try:
@@ -117,6 +124,11 @@ def _run_step(step_id, command):
         env = os.environ.copy()
         if not env.get("HOME") or env["HOME"] == "/":
             env["HOME"] = "/app/python/source_code"
+        home = env.get("HOME", "/app/python/source_code")
+        # Ensure uv and other tools in ~/.local/bin are on PATH
+        local_bin = os.path.join(home, ".local", "bin")
+        if local_bin not in env.get("PATH", ""):
+            env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
         env.pop("DATABRICKS_CLIENT_ID", None)
         env.pop("DATABRICKS_CLIENT_SECRET", None)
 
@@ -259,12 +271,12 @@ def run_setup():
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [
-        ("claude",     ["python", "setup_claude.py"]),
-        ("codex",      ["python", "setup_codex.py"]),
-        ("opencode",   ["python", "setup_opencode.py"]),
-        ("gemini",     ["python", "setup_gemini.py"]),
-        ("databricks", ["python", "setup_databricks.py"]),
-        ("mlflow",     ["python", "setup_mlflow.py"]),
+        ("claude",     ["uv", "run", "python", "setup_claude.py"]),
+        ("codex",      ["uv", "run", "python", "setup_codex.py"]),
+        ("opencode",   ["uv", "run", "python", "setup_opencode.py"]),
+        ("gemini",     ["uv", "run", "python", "setup_gemini.py"]),
+        ("databricks", ["uv", "run", "python", "setup_databricks.py"]),
+        ("mlflow",     ["uv", "run", "python", "setup_mlflow.py"]),
     ]
 
     with ThreadPoolExecutor(max_workers=len(parallel_steps)) as executor:

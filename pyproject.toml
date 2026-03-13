@@ -2,9 +2,12 @@
 name = "coda"
 version = "0.16.4"
 description = "CoDA - Coding Agents on Databricks Apps"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "flask>=2.0",
+    "flask-socketio>=5.3",
+    "simple-websocket>=1.0",
+    "gunicorn>=21.0",
     "claude-agent-sdk",
     "databricks-sdk>=0.20.0",
     "mlflow[genai]>=3.4",

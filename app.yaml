@@ -1,4 +1,6 @@
 command:
+  - uv
+  - run
   - gunicorn
   - app:app
 env:
