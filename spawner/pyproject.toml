@@ -1,0 +1,10 @@
+[project]
+name = "coda-spawner"
+version = "0.1.0"
+description = "CoDA Spawner - One-click provisioning for Coding Agents on Databricks Apps"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=2.0",
+    "gunicorn>=21.0",
+    "requests>=2.28",
+]
