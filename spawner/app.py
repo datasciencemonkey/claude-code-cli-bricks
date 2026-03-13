@@ -104,7 +104,10 @@ def deploy_app(
         headers={"Authorization": f"Bearer {oauth_token}"},
         json={"source_code_path": source_code_path},
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(
+            f"{resp.status_code} from deploy API: {resp.text}"
+        )
     return resp.json()
 
 
