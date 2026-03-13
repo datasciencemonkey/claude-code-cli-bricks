@@ -95,34 +95,37 @@ def create_app(host: str, oauth_token: str, app_name: str, scope_name: str, secr
 
 
 
-def deploy_app(
-    host: str, oauth_token: str, app_name: str, source_code_path: str,
-    retries: int = 6, interval: int = 15,
-) -> dict:
-    """Deploy the app via POST /api/2.0/apps/{name}/deployments.
-
-    Retries on 'not in RUNNING state' errors — newly created apps may need
-    a brief window before they accept their first deployment.
-    """
+def wait_for_compute_active(
+    host: str, oauth_token: str, app_name: str, timeout: int = 180, interval: int = 10,
+) -> None:
+    """Poll until compute_status reaches ACTIVE (required before first deploy)."""
     import time
 
-    last_error = ""
-    for attempt in range(retries):
-        resp = requests.post(
-            f"{host}/api/2.0/apps/{app_name}/deployments",
-            headers={"Authorization": f"Bearer {oauth_token}"},
-            json={"source_code_path": source_code_path},
-        )
+    headers = {"Authorization": f"Bearer {oauth_token}"}
+    elapsed = 0
+    while elapsed < timeout:
+        resp = requests.get(f"{host}/api/2.0/apps/{app_name}", headers=headers)
         if resp.ok:
-            return resp.json()
-        last_error = resp.text
-        # Retry only on "not in RUNNING state" errors
-        if resp.status_code == 400 and "not in RUNNING state" in resp.text:
-            time.sleep(interval)
-            continue
-        # Any other error — fail immediately
+            compute = resp.json().get("compute_status", {}).get("state", "")
+            if compute == "ACTIVE":
+                return
+        time.sleep(interval)
+        elapsed += interval
+    raise RuntimeError(f"Timed out waiting for compute to become ACTIVE after {timeout}s")
+
+
+def deploy_app(
+    host: str, oauth_token: str, app_name: str, source_code_path: str,
+) -> dict:
+    """Deploy the app via POST /api/2.0/apps/{name}/deployments."""
+    resp = requests.post(
+        f"{host}/api/2.0/apps/{app_name}/deployments",
+        headers={"Authorization": f"Bearer {oauth_token}"},
+        json={"source_code_path": source_code_path},
+    )
+    if not resp.ok:
         raise RuntimeError(f"{resp.status_code} from deploy API: {resp.text}")
-    raise RuntimeError(f"Deploy failed after {retries} retries: {last_error}")
+    return resp.json()
 
 
 def grant_sp_secret_access(
@@ -219,12 +222,16 @@ def provision_app(host: str, admin_token: str, pat_value: str) -> dict:
             steps.append({"step": 3, "status": "granting_access", "message": "Granting service principal access to secrets..."})
             grant_sp_secret_access(host, admin_token, scope_name, sp_client_id)
 
-        # Step 4: Deploy from shared template (retries if app not ready yet)
-        steps.append({"step": 4, "status": "deploying", "message": "Deploying app..."})
+        # Step 4: Wait for compute to be ready (takes ~60-90s for new apps)
+        steps.append({"step": 4, "status": "waiting_for_compute", "message": "Waiting for compute to be ready..."})
+        wait_for_compute_active(host, admin_token, app_name)
+
+        # Step 5: Deploy from shared template
+        steps.append({"step": 5, "status": "deploying", "message": "Deploying app..."})
         deploy_app(host, admin_token, app_name, source_code_path)
 
         app_url = app_result.get("url", app_result.get("app_url", ""))
-        steps.append({"step": 5, "status": "complete", "app_url": app_url})
+        steps.append({"step": 6, "status": "complete", "app_url": app_url})
 
         return {"success": True, "steps": steps, "app_url": app_url, "app_name": app_name}
 
