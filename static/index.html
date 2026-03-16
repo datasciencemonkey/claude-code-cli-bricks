@@ -1129,7 +1129,9 @@
         cursorBlink: true,
         fontSize: currentFontSize,
         fontFamily: fontFamilies[currentFontFamily] || 'monospace',
-        theme: themes[currentThemeName].theme
+        theme: themes[currentThemeName].theme,
+        scrollback: 10000,
+        scrollOnUserInput: true
       });
 
       const fitAddon = new FitAddon.FitAddon();
@@ -1643,7 +1645,11 @@
         status.textContent = 'Connected!';
         setTimeout(() => { status.style.display = 'none'; }, 1000);
 
-        window.addEventListener('resize', () => refitAllPanes());
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => refitAllPanes(), 150);
+        });
         window.addEventListener('beforeunload', () => cleanupAllPanes());
 
       } catch (e) {
