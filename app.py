@@ -91,6 +91,7 @@ setup_state = {
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "dbcli",     "label": "Upgrading Databricks CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -288,6 +289,25 @@ def run_setup():
             "mv ~/.local/bin/gh ~/.local/bin/gh.real && "
             "mv ~/.local/bin/gh.wrapper ~/.local/bin/gh && "
             "chmod +x ~/.local/bin/gh",
+        ],
+    )
+
+    # --- Upgrade Databricks CLI (runtime image ships an older version) ---
+    _run_step(
+        "dbcli",
+        [
+            "bash",
+            "-c",
+            "mkdir -p ~/.local/bin && "
+            # Fetch latest release tag from GitHub API
+            'DB_CLI_VERSION=$(curl -fsSL "https://api.github.com/repos/databricks/cli/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)[\'tag_name\'].lstrip(\'v\'))") && '
+            'echo "Installing Databricks CLI v${DB_CLI_VERSION}" && '
+            'curl -fsSL "https://github.com/databricks/cli/releases/download/v${DB_CLI_VERSION}/databricks_cli_${DB_CLI_VERSION}_linux_amd64.zip" -o /tmp/dbcli.zip && '
+            "unzip -o /tmp/dbcli.zip -d /tmp/dbcli && "
+            "mv /tmp/dbcli/databricks ~/.local/bin/databricks && "
+            "rm -rf /tmp/dbcli.zip /tmp/dbcli && "
+            "chmod +x ~/.local/bin/databricks && "
+            "databricks --version",
         ],
     )
 
