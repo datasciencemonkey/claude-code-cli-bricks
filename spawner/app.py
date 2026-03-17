@@ -189,7 +189,19 @@ def list_spawned_apps(host: str, oauth_token: str) -> list:
             last_step = job["steps"][-1] if job["steps"] else {}
             state = f"PROVISIONING: {last_step.get('message', '...')}"
         else:
-            state = a.get("app_status", {}).get("state", "UNKNOWN")
+            # List endpoint lacks app_status — derive from compute + deployment
+            compute = a.get("compute_status", {}).get("state", "")
+            deploy = a.get("active_deployment", {}).get("status", {}).get("state", "")
+            if compute == "ACTIVE" and deploy == "SUCCEEDED":
+                state = "RUNNING"
+            elif deploy == "IN_PROGRESS":
+                state = "DEPLOYING"
+            elif compute == "ACTIVE":
+                state = "DEPLOYED"
+            elif not a.get("active_deployment"):
+                state = "NOT DEPLOYED"
+            else:
+                state = compute or "UNKNOWN"
         result.append({
             "name": name,
             "url": a.get("url", ""),
