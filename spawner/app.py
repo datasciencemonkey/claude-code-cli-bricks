@@ -1,5 +1,6 @@
 """Coding Agents Spawner App -- one-click provisioning of coding-agents for any developer."""
 
+import hashlib
 import os
 import uuid
 
@@ -17,11 +18,28 @@ DATABRICKS_HOST = (
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
 
+MAX_APP_NAME_LENGTH = 63
+
 def app_name_from_email(email: str) -> str:
-    """Derive app name from user email: david.okeeffe@company.com -> coding-agents-david-okeeffe."""
+    """Derive app name from user email: david.okeeffe@company.com -> coding-agents-david-okeeffe.
+
+    Databricks app names are limited to 63 characters. If the derived name exceeds
+    this limit, the slug is truncated and a short hash suffix is appended to
+    preserve uniqueness.
+    """
+    prefix = "coding-agents-"
     username = email.split("@")[0]
     slug = username.replace(".", "-").replace("_", "-").lower()
-    return f"coding-agents-{slug}"
+    full_name = f"{prefix}{slug}"
+
+    if len(full_name) <= MAX_APP_NAME_LENGTH:
+        return full_name
+
+    # Truncate slug and append 6-char hash for uniqueness
+    hash_suffix = hashlib.sha256(slug.encode()).hexdigest()[:6]
+    max_slug_len = MAX_APP_NAME_LENGTH - len(prefix) - len(hash_suffix) - 1  # -1 for separator
+    truncated_slug = slug[:max_slug_len].rstrip("-")
+    return f"{prefix}{truncated_slug}-{hash_suffix}"
 
 
 def resolve_pat_owner(host: str, pat: str) -> str:
