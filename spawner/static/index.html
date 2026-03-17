@@ -182,7 +182,11 @@
   </div>
 
   <div class="card">
-    <div class="card-header">Spawned Apps</div>
+    <div class="card-header" style="justify-content:space-between;">
+      Spawned Apps
+      <button id="btn-redeploy-all" onclick="redeployAll()" style="font-size:12px;padding:5px 12px;background:var(--dbx-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:500;">Redeploy All</button>
+    </div>
+    <div id="redeploy-status" style="display:none;font-size:13px;padding:12px;margin-bottom:12px;background:var(--dbx-dark);border:1px solid var(--dbx-border);border-radius:6px;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;"></div>
     <div id="apps-loading" class="empty-state">Loading...</div>
     <table id="apps-table" style="display:none;">
       <thead><tr><th>App</th><th>Owner</th><th>State</th><th>Created</th></tr></thead>
@@ -350,6 +354,93 @@ async function loadApps() {
   } catch(e) {
     document.getElementById('apps-loading').textContent = 'Failed to load apps.';
   }
+}
+
+let redeployPollTimer = null;
+
+async function redeployAll() {
+  const btn = document.getElementById('btn-redeploy-all');
+  const statusDiv = document.getElementById('redeploy-status');
+  if (!confirm('Redeploy all spawned apps from the latest template?')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  statusDiv.style.display = 'block';
+  statusDiv.style.color = 'var(--dbx-blue)';
+  statusDiv.style.borderColor = 'rgba(88,166,255,0.3)';
+  statusDiv.textContent = 'Triggering redeploy...';
+
+  try {
+    const resp = await fetch('/api/redeploy-all', { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) {
+      statusDiv.style.color = 'var(--dbx-error)';
+      statusDiv.style.borderColor = 'rgba(248,81,73,0.3)';
+      statusDiv.textContent = 'Error: ' + data.error;
+      btn.disabled = false;
+      btn.textContent = 'Redeploy All';
+      return;
+    }
+    pollRedeployStatus();
+  } catch (e) {
+    statusDiv.style.color = 'var(--dbx-error)';
+    statusDiv.textContent = 'Request failed: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Redeploy All';
+  }
+}
+
+function pollRedeployStatus() {
+  if (redeployPollTimer) clearInterval(redeployPollTimer);
+  redeployPollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/redeploy-all/status');
+      const data = await resp.json();
+      if (!data.active) return;
+
+      const statusDiv = document.getElementById('redeploy-status');
+      const btn = document.getElementById('btn-redeploy-all');
+      const done = data.apps ? data.apps.filter(a => a.status === 'deployed').length : 0;
+      const errored = data.apps ? data.apps.filter(a => a.status === 'error').length : 0;
+      const total = data.total || 0;
+
+      if (data.status === 'in_progress') {
+        statusDiv.style.color = 'var(--dbx-blue)';
+        statusDiv.style.borderColor = 'rgba(88,166,255,0.3)';
+        btn.textContent = done + '/' + total + ' deployed';
+        let html = 'Redeploying: ' + done + '/' + total + ' complete';
+        if (errored > 0) html += ', ' + errored + ' failed';
+        if (data.apps) {
+          html += '<br>';
+          data.apps.forEach(a => {
+            const icon = a.status === 'deployed' ? '<span style="color:var(--dbx-green)">✓</span>'
+              : a.status === 'error' ? '<span style="color:var(--dbx-error)">✗</span>'
+              : a.status === 'deploying' ? '<span class="spinner-sm"></span>'
+              : '<span style="color:var(--dbx-text-muted)">○</span>';
+            html += icon + ' ' + a.name + '  ';
+          });
+        }
+        statusDiv.innerHTML = html;
+      } else if (data.status === 'complete') {
+        clearInterval(redeployPollTimer);
+        redeployPollTimer = null;
+        statusDiv.style.color = 'var(--dbx-green)';
+        statusDiv.style.borderColor = 'rgba(63,185,80,0.3)';
+        statusDiv.innerHTML = '✓ All ' + total + ' apps redeployed' + (errored > 0 ? ' (' + errored + ' failed)' : '');
+        btn.disabled = false;
+        btn.textContent = 'Redeploy All';
+        loadApps();
+      } else if (data.status === 'error') {
+        clearInterval(redeployPollTimer);
+        redeployPollTimer = null;
+        statusDiv.style.color = 'var(--dbx-error)';
+        statusDiv.style.borderColor = 'rgba(248,81,73,0.3)';
+        statusDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
+        btn.disabled = false;
+        btn.textContent = 'Redeploy All';
+      }
+    } catch (e) { /* keep polling */ }
+  }, 3000);
 }
 
 // Auto-refresh apps table every 10s

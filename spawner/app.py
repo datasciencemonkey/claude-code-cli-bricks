@@ -441,5 +441,106 @@ def api_provision_status(app_name):
     return jsonify({"found": True, **job})
 
 
+# In-memory redeploy-all job tracker
+_redeploy_job: dict | None = None
+_redeploy_lock = threading.Lock()
+
+
+def redeploy_all_apps(host: str, admin_token: str):
+    """Redeploy all coding-agents-* apps from the shared template."""
+    global _redeploy_job
+    source_code_path = "/Workspace/Shared/apps/coding-agents"
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    try:
+        # List all coding-agents apps
+        resp = requests.get(f"{host}/api/2.0/apps", headers=headers)
+        resp.raise_for_status()
+        all_apps = resp.json().get("apps", [])
+        targets = [
+            a for a in all_apps
+            if a["name"].startswith("coding-agents-")
+            and a["name"] != "coding-agents-spawner"
+        ]
+
+        with _redeploy_lock:
+            _redeploy_job["total"] = len(targets)
+            _redeploy_job["apps"] = [
+                {"name": a["name"], "status": "pending"} for a in targets
+            ]
+
+        for i, a in enumerate(targets):
+            name = a["name"]
+            with _redeploy_lock:
+                _redeploy_job["apps"][i]["status"] = "deploying"
+                _redeploy_job["completed"] = i
+
+            try:
+                deploy_resp = requests.post(
+                    f"{host}/api/2.0/apps/{name}/deployments",
+                    headers=headers,
+                    json={"source_code_path": source_code_path},
+                )
+                if deploy_resp.ok:
+                    with _redeploy_lock:
+                        _redeploy_job["apps"][i]["status"] = "deployed"
+                else:
+                    with _redeploy_lock:
+                        _redeploy_job["apps"][i]["status"] = "error"
+                        _redeploy_job["apps"][i]["error"] = deploy_resp.text[:200]
+            except Exception as exc:
+                with _redeploy_lock:
+                    _redeploy_job["apps"][i]["status"] = "error"
+                    _redeploy_job["apps"][i]["error"] = str(exc)[:200]
+
+        with _redeploy_lock:
+            _redeploy_job["completed"] = len(targets)
+            _redeploy_job["status"] = "complete"
+
+    except Exception as exc:
+        with _redeploy_lock:
+            _redeploy_job["status"] = "error"
+            _redeploy_job["error"] = str(exc)
+
+
+@app.route("/api/redeploy-all", methods=["POST"])
+def api_redeploy_all():
+    """Trigger redeployment of all spawned coding-agents apps from the shared template."""
+    global _redeploy_job
+
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin token not configured"}), 500
+
+    with _redeploy_lock:
+        if _redeploy_job and _redeploy_job.get("status") == "in_progress":
+            return jsonify({"error": "Redeploy already in progress"}), 409
+
+        _redeploy_job = {
+            "status": "in_progress",
+            "total": 0,
+            "completed": 0,
+            "apps": [],
+            "error": None,
+            "started_at": time.time(),
+        }
+
+    thread = threading.Thread(
+        target=redeploy_all_apps,
+        args=(DATABRICKS_HOST, ADMIN_TOKEN),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/redeploy-all/status")
+def api_redeploy_all_status():
+    """Poll endpoint for redeploy-all progress."""
+    with _redeploy_lock:
+        if not _redeploy_job:
+            return jsonify({"active": False})
+        return jsonify({"active": True, **_redeploy_job})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8001)
