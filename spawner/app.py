@@ -2,7 +2,8 @@
 
 import hashlib
 import os
-import uuid
+import threading
+import time
 
 import requests
 from flask import Flask, jsonify, request
@@ -16,6 +17,11 @@ DATABRICKS_HOST = (
 
 # Admin token for provisioning operations (secret scope, app creation, etc.)
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
+
+# In-memory provision progress, keyed by app_name
+# Each entry: {"steps": [...], "status": "in_progress"|"complete"|"error", "app_url": "", "app_name": ""}
+_provision_jobs: dict[str, dict] = {}
+_provision_lock = threading.Lock()
 
 
 MAX_APP_NAME_LENGTH = 63
@@ -117,8 +123,6 @@ def wait_for_compute_active(
     host: str, oauth_token: str, app_name: str, timeout: int = 180, interval: int = 10,
 ) -> None:
     """Poll until compute_status reaches ACTIVE (required before first deploy)."""
-    import time
-
     headers = {"Authorization": f"Bearer {oauth_token}"}
     elapsed = 0
     while elapsed < timeout:
@@ -169,19 +173,46 @@ def list_spawned_apps(host: str, oauth_token: str) -> list:
         headers={"Authorization": f"Bearer {oauth_token}"},
     )
     resp.raise_for_status()
-    apps = resp.json().get("apps", [])
-    return [
-        {
-            "name": a["name"],
+    all_apps = resp.json().get("apps", [])
+
+    # Merge live API state with any in-flight provision jobs
+    result = []
+    seen_names = set()
+    for a in all_apps:
+        name = a["name"]
+        if not name.startswith("coding-agents-") or name == "coding-agents-spawner":
+            continue
+        seen_names.add(name)
+        # If there's an in-flight job, overlay its status
+        job = _provision_jobs.get(name)
+        if job and job["status"] == "in_progress":
+            last_step = job["steps"][-1] if job["steps"] else {}
+            state = f"PROVISIONING: {last_step.get('message', '...')}"
+        else:
+            state = a.get("app_status", {}).get("state", "UNKNOWN")
+        result.append({
+            "name": name,
             "url": a.get("url", ""),
             "creator": a.get("creator", ""),
-            "state": a.get("app_status", {}).get("state", "UNKNOWN"),
+            "state": state,
             "compute": a.get("compute_status", {}).get("state", "UNKNOWN"),
             "created": a.get("create_time", ""),
-        }
-        for a in apps
-        if a["name"].startswith("coding-agents-") and a["name"] != "coding-agents-spawner"
-    ]
+        })
+
+    # Include in-flight jobs that haven't appeared in the API yet (app not created yet)
+    for name, job in _provision_jobs.items():
+        if name not in seen_names and job["status"] == "in_progress":
+            last_step = job["steps"][-1] if job["steps"] else {}
+            result.append({
+                "name": name,
+                "url": "",
+                "creator": job.get("email", ""),
+                "state": f"PROVISIONING: {last_step.get('message', '...')}",
+                "compute": "PENDING",
+                "created": "",
+            })
+
+    return result
 
 
 def check_existing_app(host: str, oauth_token: str, app_name: str) -> dict:
@@ -204,79 +235,77 @@ def check_existing_app(host: str, oauth_token: str, app_name: str) -> dict:
     return {"deployed": False}
 
 
-def provision_app(host: str, admin_token: str, pat_value: str) -> dict:
-    """Orchestrate the full provisioning flow.
+def _update_job(app_name: str, **kwargs):
+    """Thread-safe update of a provision job's state."""
+    with _provision_lock:
+        if app_name in _provision_jobs:
+            _provision_jobs[app_name].update(kwargs)
 
-    Resolves the PAT owner's identity via SCIM, then:
-    - Uses pat_value for app creation (so the user owns it)
-    - Uses admin_token for secret scopes, ACLs, linking, and deploy
-    - Stores pat_value as the secret for the spawned app
-    """
-    # Deploy from shared template — Databricks snapshots the code at deploy time
+
+def _add_step(app_name: str, step: int, status: str, message: str):
+    """Thread-safe append of a step to a provision job."""
+    entry = {"step": step, "status": status, "message": message}
+    with _provision_lock:
+        if app_name in _provision_jobs:
+            _provision_jobs[app_name]["steps"].append(entry)
+
+
+def provision_app_async(host: str, admin_token: str, pat_value: str, app_name: str):
+    """Run provisioning in a background thread, updating _provision_jobs as it goes."""
     source_code_path = "/Workspace/Shared/apps/coding-agents"
-    steps = []
 
     try:
-        # Step 0: Resolve PAT owner identity — this determines the app name
-        steps.append({"step": 0, "status": "resolving_user", "message": "Verifying your identity..."})
-        email = resolve_pat_owner(host, pat_value)
-        if not email:
-            raise ValueError("Could not resolve PAT owner identity")
-        app_name = app_name_from_email(email)
         scope_name = f"{app_name}-secrets"
-        # Deterministic key so re-provisions overwrite the same secret
         secret_key = "databricks-token"
 
-        # Step 0.5: Check if app already exists and is running — skip provisioning
-        existing = check_existing_app(host, admin_token, app_name)
-        if existing.get("deployed") and existing.get("state") == "RUNNING":
-            # Still update the stored PAT in case user rotated their token
-            store_pat_in_secret_scope(host, admin_token, app_name, pat_value, secret_key)
-            return {
-                "success": True,
-                "steps": [{"step": 0, "status": "already_deployed", "message": "App already running — token refreshed."}],
-                "app_url": existing.get("app_url", ""),
-                "app_name": app_name,
-            }
-
-        # Step 1: Create secret scope and store user's PAT (admin token for scope ops)
-        steps.append({"step": 1, "status": "storing_secret", "message": "Storing token in secret scope..."})
+        # Step 1: Store secret
+        _add_step(app_name, 1, "storing_secret", "Storing token in secret scope...")
         store_pat_in_secret_scope(host, admin_token, app_name, pat_value, secret_key)
 
-        # Step 2: Create app with secret resource using user's PAT so they own it
-        steps.append({"step": 2, "status": "creating_app", "message": f"Creating app '{app_name}'..."})
+        # Step 2: Create app
+        _add_step(app_name, 2, "creating_app", f"Creating app '{app_name}'...")
         app_result = create_app(host, pat_value, app_name, scope_name, secret_key)
         sp_client_id = app_result.get("service_principal_client_id", "")
 
-        # Step 3: Grant the app's SP READ access on the secret scope
+        # Step 3: Grant SP access
         if sp_client_id:
-            steps.append({"step": 3, "status": "granting_access", "message": "Granting service principal access to secrets..."})
+            _add_step(app_name, 3, "granting_access", "Granting service principal access...")
             grant_sp_secret_access(host, admin_token, scope_name, sp_client_id)
 
-        # Step 4: Wait for compute to be ready (takes ~60-90s for new apps)
-        steps.append({"step": 4, "status": "waiting_for_compute", "message": "Waiting for compute to be ready..."})
+        # Step 4: Wait for compute
+        _add_step(app_name, 4, "waiting_for_compute", "Waiting for compute to be ready (60-90s)...")
         wait_for_compute_active(host, admin_token, app_name)
 
-        # Step 5: Deploy from shared template
-        steps.append({"step": 5, "status": "deploying", "message": "Deploying app..."})
+        # Step 5: Deploy
+        _add_step(app_name, 5, "deploying", "Deploying app...")
         deploy_app(host, admin_token, app_name, source_code_path)
 
-        app_url = app_result.get("url", app_result.get("app_url", ""))
-        steps.append({"step": 6, "status": "complete", "app_url": app_url})
+        # Step 6: Wait for app to be running
+        _add_step(app_name, 6, "starting", "Waiting for app to start...")
+        _wait_for_app_running(host, admin_token, app_name)
 
-        return {"success": True, "steps": steps, "app_url": app_url, "app_name": app_name}
+        app_url = app_result.get("url", app_result.get("app_url", ""))
+        _add_step(app_name, 7, "complete", "App is running!")
+        _update_job(app_name, status="complete", app_url=app_url)
 
     except Exception as exc:
-        current_step = steps[-1]["step"] if steps else 0
-        current_status = steps[-1]["status"] if steps else "unknown"
-        return {
-            "success": False,
-            "error": {
-                "step": current_step,
-                "status": current_status,
-                "message": str(exc),
-            },
-        }
+        _add_step(app_name, -1, "error", str(exc))
+        _update_job(app_name, status="error", error=str(exc))
+
+
+def _wait_for_app_running(host: str, token: str, app_name: str, timeout: int = 300, interval: int = 10):
+    """Poll until app_status reaches RUNNING."""
+    headers = {"Authorization": f"Bearer {token}"}
+    elapsed = 0
+    while elapsed < timeout:
+        resp = requests.get(f"{host}/api/2.0/apps/{app_name}", headers=headers)
+        if resp.ok:
+            state = resp.json().get("app_status", {}).get("state", "")
+            if state == "RUNNING":
+                return
+        time.sleep(interval)
+        elapsed += interval
+    raise RuntimeError(f"Timed out waiting for app to reach RUNNING after {timeout}s")
 
 
 # --- Flask Routes ---
@@ -321,7 +350,7 @@ def api_status():
 
 @app.route("/api/apps")
 def api_list_apps():
-    """List all spawned coding-agents apps."""
+    """List all spawned coding-agents apps (with in-flight provision status merged)."""
     host = DATABRICKS_HOST
     if not ADMIN_TOKEN:
         return jsonify({"error": "Admin token not configured"}), 500
@@ -331,22 +360,73 @@ def api_list_apps():
 
 @app.route("/api/provision", methods=["POST"])
 def api_provision():
-    """Run the full provisioning flow with user-supplied PAT."""
-    email = request.headers.get("X-Forwarded-Email", "")
+    """Start provisioning in background. Returns immediately with app_name to poll."""
     host = DATABRICKS_HOST
 
     if not ADMIN_TOKEN:
-        return jsonify({"success": False, "error": {"step": 0, "status": "config", "message": "Spawner admin token not configured"}}), 500
+        return jsonify({"success": False, "error": "Spawner admin token not configured"}), 500
 
     body = request.get_json(silent=True) or {}
     pat_value = body.get("pat", "").strip()
 
     if not pat_value:
-        return jsonify({"success": False, "error": {"step": 0, "status": "validation", "message": "PAT is required"}}), 400
+        return jsonify({"success": False, "error": "PAT is required"}), 400
 
-    result = provision_app(host, ADMIN_TOKEN, pat_value)
-    status_code = 200 if result["success"] else 500
-    return jsonify(result), status_code
+    # Resolve identity synchronously (fast) so we can return the app_name
+    try:
+        email = resolve_pat_owner(host, pat_value)
+        if not email:
+            raise ValueError("Could not resolve PAT owner identity")
+    except Exception as exc:
+        return jsonify({"success": False, "error": f"Invalid PAT: {exc}"}), 400
+
+    app_name = app_name_from_email(email)
+
+    # Check if already running — just refresh token
+    existing = check_existing_app(host, ADMIN_TOKEN, app_name)
+    if existing.get("deployed") and existing.get("state") == "RUNNING":
+        store_pat_in_secret_scope(host, ADMIN_TOKEN, app_name, pat_value, "databricks-token")
+        return jsonify({
+            "success": True,
+            "app_name": app_name,
+            "app_url": existing.get("app_url", ""),
+            "already_running": True,
+        })
+
+    # Check if already provisioning
+    with _provision_lock:
+        existing_job = _provision_jobs.get(app_name)
+        if existing_job and existing_job["status"] == "in_progress":
+            return jsonify({"success": True, "app_name": app_name, "already_in_progress": True})
+
+        # Initialize job tracker
+        _provision_jobs[app_name] = {
+            "steps": [{"step": 0, "status": "resolving_user", "message": "Identity verified, starting provision..."}],
+            "status": "in_progress",
+            "app_url": "",
+            "app_name": app_name,
+            "email": email,
+        }
+
+    # Kick off background thread
+    thread = threading.Thread(
+        target=provision_app_async,
+        args=(host, ADMIN_TOKEN, pat_value, app_name),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"success": True, "app_name": app_name})
+
+
+@app.route("/api/provision-status/<app_name>")
+def api_provision_status(app_name):
+    """Poll endpoint for provision progress."""
+    with _provision_lock:
+        job = _provision_jobs.get(app_name)
+    if not job:
+        return jsonify({"found": False})
+    return jsonify({"found": True, **job})
 
 
 if __name__ == "__main__":

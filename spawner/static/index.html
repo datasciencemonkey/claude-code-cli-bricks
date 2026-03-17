@@ -17,6 +17,7 @@
       --dbx-text-muted: #8B949E;
       --dbx-green: #3FB950;
       --dbx-yellow: #D29922;
+      --dbx-blue: #58A6FF;
       --dbx-error: #F85149;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -94,13 +95,25 @@
       margin-top: 20px; font-size: 13px;
       font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
       background: var(--dbx-dark); border: 1px solid var(--dbx-border);
-      border-radius: 6px; padding: 16px; white-space: pre-wrap;
+      border-radius: 6px; padding: 16px;
       display: none; line-height: 1.6;
     }
     .status-success { color: var(--dbx-green); border-color: rgba(63,185,80,0.3); }
     .status-error { color: var(--dbx-error); border-color: rgba(248,81,73,0.3); }
-    .status-progress { color: var(--dbx-text-muted); }
+    .status-progress { color: var(--dbx-text-muted); border-color: rgba(88,166,255,0.3); }
     .status-success a { color: var(--dbx-green); }
+
+    .step-list { list-style: none; padding: 0; margin: 0; }
+    .step-list li {
+      padding: 4px 0;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .step-icon { width: 18px; text-align: center; flex-shrink: 0; }
+    .step-done .step-icon { color: var(--dbx-green); }
+    .step-active .step-icon { color: var(--dbx-blue); }
+    .step-error .step-icon { color: var(--dbx-error); }
+    .step-active .step-msg { color: var(--dbx-text); }
+    .step-done .step-msg { color: var(--dbx-text-muted); }
 
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     thead th {
@@ -113,12 +126,18 @@
     td a { color: var(--dbx-red); text-decoration: none; font-weight: 500; }
     td a:hover { text-decoration: underline; }
     .state-running { color: var(--dbx-green); font-weight: 500; }
+    .state-provisioning { color: var(--dbx-blue); font-weight: 500; }
     .state-other { color: var(--dbx-yellow); }
     .empty-state { color: var(--dbx-text-muted); text-align: center; padding: 24px; }
 
     .spinner {
       display: inline-block; width: 16px; height: 16px;
       border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    .spinner-sm {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid rgba(88,166,255,0.3); border-top-color: var(--dbx-blue);
       border-radius: 50%; animation: spin 0.6s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -179,16 +198,19 @@ const appName = document.body.getAttribute('data-app-name') || 'coding-agents-yo
 document.getElementById('user-email').textContent = userEmail;
 document.getElementById('app-name-preview').textContent = appName;
 
+let pollTimer = null;
+
 async function deploy() {
   const pat = document.getElementById('pat').value.trim();
   if (!pat) { alert('Please enter your Personal Access Token.'); return; }
   const btn = document.getElementById('btn');
   const status = document.getElementById('status');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Provisioning...';
+  btn.innerHTML = '<span class="spinner"></span> Starting...';
   status.style.display = 'block';
   status.className = 'status-progress';
-  status.textContent = 'Starting provisioning...';
+  status.innerHTML = 'Verifying your identity...';
+
   try {
     const resp = await fetch('/api/provision', {
       method: 'POST',
@@ -196,21 +218,96 @@ async function deploy() {
       body: JSON.stringify({ pat: pat })
     });
     const data = await resp.json();
-    if (data.success) {
-      status.className = 'status-success';
-      status.innerHTML = '\u2713 Deployed successfully!\n\n'
-        + 'App: ' + data.app_name + '\n'
-        + 'URL: <a href="' + data.app_url + '">' + data.app_url + '</a>\n\n'
-        + data.steps.map(s => s.step + '. ' + (s.message || s.status)).join('\n');
-      loadApps();
-    } else {
+
+    if (!data.success) {
       status.className = 'status-error';
-      status.textContent = 'Failed at step ' + data.error.step + ' (' + data.error.status + '):\n' + data.error.message;
+      status.textContent = 'Error: ' + (data.error || 'Unknown error');
+      resetBtn();
+      return;
     }
+
+    if (data.already_running) {
+      status.className = 'status-success';
+      status.innerHTML = '&#10003; App already running &mdash; token refreshed.\n\n'
+        + 'URL: <a href="' + data.app_url + '">' + data.app_url + '</a>';
+      resetBtn();
+      loadApps();
+      return;
+    }
+
+    // Start polling for progress
+    btn.innerHTML = '<span class="spinner"></span> Provisioning...';
+    pollProvisionStatus(data.app_name);
+
   } catch (e) {
     status.className = 'status-error';
     status.textContent = 'Request failed: ' + e.message;
+    resetBtn();
   }
+}
+
+function pollProvisionStatus(appName) {
+  if (pollTimer) clearInterval(pollTimer);
+
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/provision-status/' + encodeURIComponent(appName));
+      const data = await resp.json();
+      if (!data.found) return;
+
+      renderSteps(data);
+      loadApps();
+
+      if (data.status === 'complete') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        const status = document.getElementById('status');
+        status.className = 'status-success';
+        const url = data.app_url || '';
+        status.innerHTML = renderStepsHTML(data.steps, true)
+          + (url ? '\n<a href="' + url + '" style="color:var(--dbx-green);font-weight:600;">&rarr; Open ' + appName + '</a>' : '');
+        resetBtn();
+      } else if (data.status === 'error') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        const status = document.getElementById('status');
+        status.className = 'status-error';
+        status.innerHTML = renderStepsHTML(data.steps, false);
+        resetBtn();
+      }
+    } catch (e) { /* keep polling */ }
+  }, 3000);
+}
+
+function renderSteps(data) {
+  const status = document.getElementById('status');
+  status.className = 'status-progress';
+  status.innerHTML = renderStepsHTML(data.steps, false);
+}
+
+function renderStepsHTML(steps, finished) {
+  if (!steps || steps.length === 0) return 'Starting...';
+  let html = '<ul class="step-list">';
+  steps.forEach((s, i) => {
+    const isLast = i === steps.length - 1;
+    const isError = s.status === 'error';
+    let cls = 'step-done';
+    let icon = '&#10003;';
+    if (isError) {
+      cls = 'step-error';
+      icon = '&#10007;';
+    } else if (isLast && !finished) {
+      cls = 'step-active';
+      icon = '<span class="spinner-sm"></span>';
+    }
+    html += '<li class="' + cls + '"><span class="step-icon">' + icon + '</span><span class="step-msg">' + s.message + '</span></li>';
+  });
+  html += '</ul>';
+  return html;
+}
+
+function resetBtn() {
+  const btn = document.getElementById('btn');
   btn.disabled = false;
   btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Deploy My Coding Agent';
 }
@@ -228,13 +325,23 @@ async function loadApps() {
     const tbody = document.getElementById('apps-body');
     tbody.innerHTML = '';
     data.apps.forEach(a => {
-      const stateClass = a.state === 'RUNNING' ? 'state-running' : 'state-other';
+      let stateClass = 'state-other';
+      let stateText = a.state;
+      if (a.state === 'RUNNING') {
+        stateClass = 'state-running';
+      } else if (a.state.startsWith('PROVISIONING:')) {
+        stateClass = 'state-provisioning';
+        stateText = a.state.replace('PROVISIONING: ', '');
+      }
       const created = a.created ? new Date(a.created).toLocaleDateString() : '';
       const tr = document.createElement('tr');
+      const nameCell = a.url
+        ? '<a href="' + a.url + '" target="_blank">' + a.name + '</a>'
+        : a.name;
       tr.innerHTML =
-        '<td><a href="' + a.url + '" target="_blank">' + a.name + '</a></td>'
+        '<td>' + nameCell + '</td>'
         + '<td>' + a.creator + '</td>'
-        + '<td class="' + stateClass + '">' + a.state + '</td>'
+        + '<td class="' + stateClass + '">' + stateText + '</td>'
         + '<td>' + created + '</td>';
       tbody.appendChild(tr);
     });
@@ -244,7 +351,10 @@ async function loadApps() {
     document.getElementById('apps-loading').textContent = 'Failed to load apps.';
   }
 }
+
+// Auto-refresh apps table every 10s
 loadApps();
+setInterval(loadApps, 10000);
 </script>
 </body>
 </html>
