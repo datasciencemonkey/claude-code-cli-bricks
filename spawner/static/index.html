@@ -209,7 +209,7 @@ async function deploy() {
   btn.innerHTML = '<span class="spinner"></span> Starting...';
   status.style.display = 'block';
   status.className = 'status-progress';
-  status.innerHTML = 'Verifying your identity...';
+  status.innerHTML = '<ul class="step-list"><li class="step-active"><span class="step-icon"><span class="spinner-sm"></span></span><span class="step-msg">Verifying your identity...</span></li></ul>';
 
   try {
     const resp = await fetch('/api/provision', {
