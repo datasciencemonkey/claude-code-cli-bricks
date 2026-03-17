@@ -196,7 +196,7 @@ def check_existing_app(host: str, oauth_token: str, app_name: str) -> dict:
             "deployed": True,
             "app_name": app_name,
             "app_url": data.get("url", ""),
-            "state": data.get("status", {}).get("state", "UNKNOWN"),
+            "state": data.get("app_status", {}).get("state", "UNKNOWN"),
             "service_principal_id": data.get("service_principal_id"),
             "service_principal_client_id": data.get("service_principal_client_id"),
             "service_principal_name": data.get("service_principal_name"),
