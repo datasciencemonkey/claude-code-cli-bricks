@@ -15,7 +15,7 @@ DATABRICKS_HOST = (
 ).rstrip("/")
 
 # Admin token for provisioning operations (secret scope, app creation, etc.)
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
 
 
 MAX_APP_NAME_LENGTH = 63
