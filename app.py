@@ -30,8 +30,8 @@ except Exception:
     APP_VERSION = '0.0.0'
 
 # Session timeout configuration
-SESSION_TIMEOUT_SECONDS = 300       # No poll for 5 min = dead session
-CLEANUP_INTERVAL_SECONDS = 60       # How often to check for stale sessions
+SESSION_TIMEOUT_SECONDS = 86400      # No poll for 24 hours = dead session
+CLEANUP_INTERVAL_SECONDS = 900       # Check for stale sessions every 15 min
 GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
 
 # Logging setup
