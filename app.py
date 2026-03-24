@@ -84,6 +84,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "claude",     "label": "Configuring Claude CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "codex",      "label": "Configuring Codex CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -253,10 +254,12 @@ def run_setup():
     _run_step("micro", ["bash", "-c",
         "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
 
+    _run_step("gh", ["bash", "install_gh.sh"])
+
     # --- Content-filter proxy (must be running before OpenCode starts) ---
     # Sanitizes requests/responses between OpenCode and Databricks
     # (see OpenCode #5028, docs/plans/2026-03-11-litellm-empty-content-blocks-design.md)
-    _run_step("proxy", ["python", "setup_proxy.py"])
+    _run_step("proxy", ["uv", "run", "python", "setup_proxy.py"])
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [
@@ -488,7 +491,7 @@ def read_pty_output(session_id, fd):
             if session_id not in sessions:
                 break
         try:
-            readable, _, errors = select.select([fd], [], [fd], 0.5)
+            readable, _, errors = select.select([fd], [], [fd], 0.05)
             if readable or errors:
                 output = os.read(fd, 4096)
                 if not output:
@@ -570,7 +573,10 @@ def cleanup_stale_sessions():
         warning_threshold = SESSION_TIMEOUT_SECONDS * 0.8
 
         with sessions_lock:
-            for session_id, session in sessions.items():
+            session_snapshot = list(sessions.items())
+
+        for session_id, session in session_snapshot:
+            with session["lock"]:
                 idle = now - session["last_poll_time"]
                 if idle > SESSION_TIMEOUT_SECONDS:
                     stale_sessions.append((session_id, session["pid"], session["master_fd"]))
@@ -803,22 +809,31 @@ def get_output_batch():
     outputs = {}
     now = time.time()
 
+    # Step 1: Resolve session refs under global lock (fast dict lookups only)
+    resolved = {}
     with sessions_lock:
         for sid in session_ids:
-            if sid not in sessions:
-                continue
-            session = sessions[sid]
+            if sid in sessions:
+                resolved[sid] = sessions[sid]
+
+    # Step 2: Swap buffers under per-session locks (same pattern as get_output)
+    swapped = {}
+    for sid, session in resolved.items():
+        with session["lock"]:
             session["last_poll_time"] = now
-            buffer = session["output_buffer"]
-            output = "".join(buffer)
-            buffer.clear()
+            old_buffer = session["output_buffer"]
+            session["output_buffer"] = deque(maxlen=1000)
             exited = session.get("exited", False)
             timeout_warning = session.pop("timeout_warning", False)
-            outputs[sid] = {
-                "output": output,
-                "exited": exited,
-                "timeout_warning": timeout_warning
-            }
+        swapped[sid] = (old_buffer, exited, timeout_warning)
+
+    # Step 3: Join strings outside all locks
+    for sid, (old_buffer, exited, timeout_warning) in swapped.items():
+        outputs[sid] = {
+            "output": "".join(old_buffer),
+            "exited": exited,
+            "timeout_warning": timeout_warning,
+        }
 
     return jsonify({"outputs": outputs, "shutting_down": shutting_down})
 

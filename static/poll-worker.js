@@ -21,7 +21,7 @@
 "use strict";
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const POLL_INTERVAL_FG = 100;        // ms — foreground batch poll
+const POLL_INTERVAL_FG = 50;         // ms — foreground batch poll
 const HEARTBEAT_INTERVAL_BG = 30000; // ms — background heartbeat
 const RETRY_BASE_MS = 500;
 const RETRY_MULTIPLIER = 2;
