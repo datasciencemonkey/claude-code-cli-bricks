@@ -50,6 +50,8 @@ logger = logging.getLogger(__name__)
 pat_rotator = PATRotator(
     secret_scope=os.environ.get("PAT_SECRET_SCOPE"),
     secret_key=os.environ.get("PAT_SECRET_KEY", "DATABRICKS_TOKEN"),
+    rotation_interval=int(os.environ.get("PAT_ROTATION_INTERVAL", "5400")),
+    token_lifetime=int(os.environ.get("PAT_TOKEN_LIFETIME", "7200")),
 )
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
