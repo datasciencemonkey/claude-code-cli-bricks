@@ -386,7 +386,7 @@ class TestLogging:
 
     @mock.patch("pat_rotator.requests.post")
     def test_log_pat_rotated_label(self, mock_post, caplog, tmp_path):
-        """Every successful rotation includes 'PAT ROTATED' in the log."""
+        """Every successful rotation includes 'PAT rotation complete' in the log."""
         mock_post.side_effect = [
             _mock_create_response(token_value="dapi-label", token_id="tid-label"),
             _mock_delete_response(status_code=200),
@@ -400,4 +400,4 @@ class TestLogging:
             rotator._rotate_once()
 
         combined = " ".join(caplog.messages)
-        assert "PAT ROTATED" in combined
+        assert "PAT rotation complete" in combined

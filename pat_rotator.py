@@ -80,6 +80,8 @@ class PATRotator:
         if not self._current_token:
             return False
 
+        logger.info("INFO: PAT rotation starting — minting new short-lived token...")
+
         # 1. Mint new token
         try:
             resp = requests.post(
@@ -121,19 +123,19 @@ class PATRotator:
                     timeout=30
                 )
                 if resp.status_code == 200:
-                    logger.info(f"PAT ROTATED: new token minted (id={new_token_id}, "
+                    logger.info(f"INFO: PAT rotation complete — new token (id={new_token_id}, "
                                 f"expires in {self._token_lifetime}s). "
                                 f"Old token ELIMINATED (id={old_token_id}).")
                 else:
-                    logger.warning(f"PAT ROTATED: new token active (id={new_token_id}), "
+                    logger.warning(f"INFO: PAT rotation complete — new token active (id={new_token_id}), "
                                    f"but old token revocation failed ({resp.status_code}). "
-                                   f"Old token (id={old_token_id}) will expire naturally.")
+                                   f"Old token (id={old_token_id}) will expire naturally in {self._token_lifetime}s.")
             except requests.RequestException as e:
-                logger.warning(f"PAT ROTATED: new token active (id={new_token_id}), "
+                logger.warning(f"INFO: PAT rotation complete — new token active (id={new_token_id}), "
                                f"old token revocation request failed: {e}. "
-                               f"Old token (id={old_token_id}) will expire naturally.")
+                               f"Old token (id={old_token_id}) will expire naturally in {self._token_lifetime}s.")
         else:
-            logger.info(f"PAT ROTATED: new token minted (id={new_token_id}, "
+            logger.info(f"INFO: PAT rotation complete — new token (id={new_token_id}, "
                         f"expires in {self._token_lifetime}s). First rotation — no old token to revoke.")
 
         return True
