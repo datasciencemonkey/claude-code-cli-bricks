@@ -259,11 +259,12 @@ def _reinit_app_git():
     logger.info("Reinitialized app source git (template origin removed)")
 
 
-def _configure_claude_auth(token):
-    """Write ~/.claude/settings.json so the Claude CLI authenticates via Databricks.
+def _configure_all_cli_auth(token):
+    """Configure auth for ALL coding-agent CLIs after a PAT is provided.
 
-    Called from setup_claude.py at boot (if token is present) and again from
-    /api/configure-pat when a user supplies a PAT interactively.
+    Called from /api/configure-pat when a user supplies a PAT interactively.
+    Handles: Claude CLI (inline), Databricks CLI (via pat_rotator), and
+    Codex/OpenCode/Gemini CLIs (by re-running their setup scripts with token in env).
     """
     import json
 
@@ -271,6 +272,7 @@ def _configure_claude_auth(token):
     if not home or home == "/":
         home = "/app/python/source_code"
 
+    # 1. Configure Claude CLI (~/.claude/settings.json)
     claude_dir = os.path.join(home, ".claude")
     os.makedirs(claude_dir, exist_ok=True)
 
@@ -296,6 +298,27 @@ def _configure_claude_auth(token):
         json.dump(settings, f, indent=2)
 
     logger.info(f"Claude CLI auth configured: {settings_path}")
+
+    # 2. Configure Databricks CLI (~/.databrickscfg) — already called by
+    #    configure_pat() via pat_rotator, but explicit for clarity
+    pat_rotator._write_databrickscfg(token)
+    logger.info("Databricks CLI auth configured: ~/.databrickscfg")
+
+    # 3. Re-run Codex, OpenCode, Gemini setup scripts with token in env
+    #    They are idempotent: detect CLI already installed, just write config files
+    env = {**os.environ, "DATABRICKS_TOKEN": token}
+    for script in ["setup_codex.py", "setup_opencode.py", "setup_gemini.py"]:
+        try:
+            result = subprocess.run(
+                ["uv", "run", "python", script],
+                env=env, capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0:
+                logger.info(f"CLI config updated: {script}")
+            else:
+                logger.warning(f"CLI config failed: {script}: {result.stderr[:200]}")
+        except Exception as e:
+            logger.warning(f"CLI config error: {script}: {e}")
 
 
 def run_setup():
@@ -790,8 +813,8 @@ def configure_pat():
     pat_rotator._write_databrickscfg(token)
     pat_rotator.start()
 
-    # Configure Claude CLI auth so it can use the new token immediately
-    _configure_claude_auth(token)
+    # Configure all CLI tools (Claude, Codex, OpenCode, Gemini, Databricks)
+    _configure_all_cli_auth(token)
 
     logger.info(f"PAT configured interactively by {user} — rotation started")
     return jsonify({"status": "ok", "user": user, "message": "Token configured. Auto-rotation started."})
