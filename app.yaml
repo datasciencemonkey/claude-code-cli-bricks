@@ -10,6 +10,10 @@ env:
     value: coda-app
   - name: PAT_SECRET_KEY
     value: DATABRICKS_TOKEN
+  - name: PAT_ROTATION_INTERVAL
+    value: "120"
+  - name: PAT_TOKEN_LIFETIME
+    value: "7200"
   - name: ANTHROPIC_MODEL
     value: databricks-claude-opus-4-6
   - name: GEMINI_MODEL
