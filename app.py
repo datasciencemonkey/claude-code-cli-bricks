@@ -259,6 +259,45 @@ def _reinit_app_git():
     logger.info("Reinitialized app source git (template origin removed)")
 
 
+def _configure_claude_auth(token):
+    """Write ~/.claude/settings.json so the Claude CLI authenticates via Databricks.
+
+    Called from setup_claude.py at boot (if token is present) and again from
+    /api/configure-pat when a user supplies a PAT interactively.
+    """
+    import json
+
+    home = os.environ.get("HOME", "/app/python/source_code")
+    if not home or home == "/":
+        home = "/app/python/source_code"
+
+    claude_dir = os.path.join(home, ".claude")
+    os.makedirs(claude_dir, exist_ok=True)
+
+    gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
+    databricks_host = ensure_https(os.environ.get("DATABRICKS_HOST", "").rstrip("/"))
+
+    if gateway_host:
+        anthropic_base_url = f"{gateway_host}/anthropic"
+    else:
+        anthropic_base_url = f"{databricks_host}/serving-endpoints/anthropic"
+
+    settings = {
+        "env": {
+            "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-sonnet-4-6"),
+            "ANTHROPIC_BASE_URL": anthropic_base_url,
+            "ANTHROPIC_AUTH_TOKEN": token,
+            "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
+        }
+    }
+
+    settings_path = os.path.join(claude_dir, "settings.json")
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    logger.info(f"Claude CLI auth configured: {settings_path}")
+
+
 def run_setup():
     with setup_lock:
         setup_state["status"] = "running"
@@ -750,6 +789,9 @@ def configure_pat():
     pat_rotator._current_token_id = None
     pat_rotator._write_databrickscfg(token)
     pat_rotator.start()
+
+    # Configure Claude CLI auth so it can use the new token immediately
+    _configure_claude_auth(token)
 
     logger.info(f"PAT configured interactively by {user} — rotation started")
     return jsonify({"status": "ok", "user": user, "message": "Token configured. Auto-rotation started."})
