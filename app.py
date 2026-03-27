@@ -63,8 +63,6 @@ sessions_lock = threading.Lock()
 # PAT auto-rotation (short-lived tokens, background refresh)
 # Only rotates while active sessions exist — stops when all sessions are reaped
 pat_rotator = PATRotator(
-    secret_scope=os.environ.get("PAT_SECRET_SCOPE"),
-    secret_key=os.environ.get("PAT_SECRET_KEY", "DATABRICKS_TOKEN"),
     session_count_fn=lambda: len(sessions),
 )
 

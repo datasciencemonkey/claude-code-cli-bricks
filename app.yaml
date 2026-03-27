@@ -4,10 +4,6 @@ command:
 env:
   - name: HOME
     value: /app/python/source_code
-  - name: PAT_SECRET_SCOPE
-    value: coda-app
-  - name: PAT_SECRET_KEY
-    value: DATABRICKS_TOKEN
   - name: ANTHROPIC_MODEL
     value: databricks-claude-opus-4-6
   - name: GEMINI_MODEL
@@ -18,9 +14,3 @@ env:
     valueFrom: DATABRICKS_GATEWAY_HOST
   - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY
     value: 0
-resources:
-  - name: pat-token
-    secret:
-      scope: coda-app
-      key: DATABRICKS_TOKEN
-      permission: WRITE
