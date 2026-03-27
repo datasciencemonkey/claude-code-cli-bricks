@@ -1,9 +1,9 @@
 """Auto-rotate short-lived PATs in the background.
 
-Mints a new 15-minute PAT every 10 minutes, persists to app secret
-(survives restart), writes to ~/.databrickscfg (immediate CLI/SDK use),
-and revokes the old PAT. Rotation only runs while active sessions exist.
-Fixes #81.
+Mints a new 15-minute PAT every 10 minutes, writes to ~/.databrickscfg
+(immediate CLI/SDK use), and revokes the old PAT. Rotation only runs
+while active sessions exist. If the app restarts, the interactive PAT
+prompt re-provisions credentials on next session. Fixes #81.
 """
 
 import os
@@ -12,7 +12,6 @@ import threading
 import logging
 
 import requests
-from databricks.sdk import WorkspaceClient
 
 from utils import ensure_https
 
@@ -23,7 +22,7 @@ DEFAULT_ROTATION_INTERVAL = 600     # 10 minutes
 
 
 class PATRotator:
-    """Background PAT rotation with secret persistence.
+    """Background PAT rotation with session-aware lifecycle.
 
     Rotation only runs while there are active sessions. When the last session
     is reaped (24h timeout), rotation stops. When a new session is created,
@@ -32,13 +31,10 @@ class PATRotator:
 
     def __init__(self, host=None, rotation_interval=DEFAULT_ROTATION_INTERVAL,
                  token_lifetime=DEFAULT_TOKEN_LIFETIME,
-                 secret_scope=None, secret_key=None,
                  session_count_fn=None):
         self._host = ensure_https(host or os.environ.get("DATABRICKS_HOST", ""))
         self._rotation_interval = rotation_interval
         self._token_lifetime = token_lifetime
-        self._secret_scope = secret_scope
-        self._secret_key = secret_key
         self._session_count_fn = session_count_fn or (lambda: 0)
         self._current_token = os.environ.get("DATABRICKS_TOKEN", "").strip() or None
         self._current_token_id = None
@@ -157,7 +153,6 @@ class PATRotator:
         """Write rotated token to all persistence layers."""
         os.environ["DATABRICKS_TOKEN"] = token
         self._write_databrickscfg(token)
-        self._persist_to_secret(token)
         logger.info("PAT persisted: env var + ~/.databrickscfg updated")
 
     def _write_databrickscfg(self, token):
@@ -174,14 +169,3 @@ class PATRotator:
         except OSError as e:
             logger.warning(f"Could not write .databrickscfg: {e}")
 
-    def _persist_to_secret(self, token):
-        """Persist token to Databricks app secret (survives restart)."""
-        if not self._secret_scope or not self._secret_key:
-            return
-        try:
-            w = WorkspaceClient()
-            w.secrets.put_secret(scope=self._secret_scope, key=self._secret_key,
-                                string_value=token)
-            logger.info(f"PAT persisted to app secret ({self._secret_scope}/{self._secret_key})")
-        except Exception as e:
-            logger.warning(f"Could not persist PAT to secret: {e}")

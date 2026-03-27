@@ -1,7 +1,7 @@
 """Tests for PATRotator — short-lived PAT auto-rotation.
 
-Covers: rotation logic, token persistence, secret persistence,
-lifecycle management, and logging output.
+Covers: rotation logic, token persistence, lifecycle management,
+and logging output.
 """
 
 import logging
@@ -213,54 +213,7 @@ class TestTokenPersistence:
 
 
 # ---------------------------------------------------------------------------
-# 3. Secret Persistence — Databricks SDK put_secret
-# ---------------------------------------------------------------------------
-
-class TestSecretPersistence:
-    """Token is persisted to Databricks app secrets when configured."""
-
-    @mock.patch("pat_rotator.WorkspaceClient")
-    @mock.patch("pat_rotator.requests.post")
-    def test_calls_put_secret(self, mock_post, mock_wsc_cls, tmp_path):
-        """When scope/key configured, calls SDK put_secret with new token."""
-        mock_post.side_effect = [
-            _mock_create_response(token_value="dapi-secret", token_id="tid-sec"),
-            _mock_delete_response(),
-        ]
-        mock_wsc = mock.MagicMock()
-        mock_wsc_cls.return_value = mock_wsc
-
-        rotator = _make_rotator(secret_scope="my-scope", secret_key="my-key")
-        rotator._current_token = "dapi-old"
-        rotator._current_token_id = "tid-old"
-        rotator._databrickscfg_path = str(tmp_path / ".databrickscfg")
-
-        rotator._rotate_once()
-
-        mock_wsc.secrets.put_secret.assert_called_once_with(
-            scope="my-scope", key="my-key", string_value="dapi-secret"
-        )
-
-    @mock.patch("pat_rotator.WorkspaceClient")
-    @mock.patch("pat_rotator.requests.post")
-    def test_skips_secret_when_no_scope(self, mock_post, mock_wsc_cls, tmp_path):
-        """When no scope/key configured, SDK is not called at all."""
-        mock_post.side_effect = [
-            _mock_create_response(token_value="dapi-nosec", token_id="tid-nosec"),
-            _mock_delete_response(),
-        ]
-        rotator = _make_rotator()  # no secret_scope/secret_key
-        rotator._current_token = "dapi-old"
-        rotator._current_token_id = "tid-old"
-        rotator._databrickscfg_path = str(tmp_path / ".databrickscfg")
-
-        rotator._rotate_once()
-
-        mock_wsc_cls.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 4. Rotator Lifecycle — start / stop / daemon thread
+# 3. Rotator Lifecycle — start / stop / daemon thread
 # ---------------------------------------------------------------------------
 
 class TestRotatorLifecycle:
@@ -323,7 +276,7 @@ class TestRotatorLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# 5. Session awareness — only rotate when sessions exist
+# 4. Session awareness — only rotate when sessions exist
 # ---------------------------------------------------------------------------
 
 class TestSessionAwareness:
@@ -366,7 +319,7 @@ class TestSessionAwareness:
 
 
 # ---------------------------------------------------------------------------
-# 6. Logging — verify key messages
+# 5. Logging — verify key messages
 # ---------------------------------------------------------------------------
 
 class TestLogging:
