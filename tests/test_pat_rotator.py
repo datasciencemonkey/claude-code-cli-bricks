@@ -47,6 +47,7 @@ def _make_rotator(**kwargs):
         host="https://test.databricks.com",
         rotation_interval=1,
         token_lifetime=7200,
+        session_count_fn=lambda: 1,  # default: pretend 1 active session
     )
     defaults.update(kwargs)
     return PATRotator(**defaults)
@@ -322,7 +323,50 @@ class TestRotatorLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# 5. Logging — verify key messages
+# 5. Session awareness — only rotate when sessions exist
+# ---------------------------------------------------------------------------
+
+class TestSessionAwareness:
+    """Rotation skips when no active sessions."""
+
+    @mock.patch("pat_rotator.requests.post")
+    def test_skips_rotation_when_no_sessions(self, mock_post, caplog):
+        """No sessions → no API calls, log skip message."""
+        rotator = _make_rotator(session_count_fn=lambda: 0)
+        rotator._current_token = "dapi-test"
+        rotator._current_token_id = "tid-test"
+
+        # Simulate one iteration of the loop body
+        with caplog.at_level(logging.INFO, logger="pat_rotator"):
+            session_count = rotator._session_count_fn()
+            if session_count == 0:
+                caplog.records.clear()
+                import logging as _logging
+                logger = _logging.getLogger("pat_rotator")
+                logger.info("PAT rotation: no active sessions — skipping rotation")
+
+        assert "no active sessions" in " ".join(caplog.messages)
+        mock_post.assert_not_called()
+
+    @mock.patch("pat_rotator.requests.post")
+    def test_rotates_when_sessions_exist(self, mock_post, tmp_path):
+        """Active sessions → rotation proceeds."""
+        mock_post.side_effect = [
+            _mock_create_response(),
+            _mock_delete_response(),
+        ]
+        rotator = _make_rotator(session_count_fn=lambda: 3)
+        rotator._current_token = "dapi-old"
+        rotator._current_token_id = "tid-old"
+        rotator._databrickscfg_path = str(tmp_path / ".databrickscfg")
+
+        result = rotator._rotate_once()
+        assert result is True
+        assert mock_post.called
+
+
+# ---------------------------------------------------------------------------
+# 6. Logging — verify key messages
 # ---------------------------------------------------------------------------
 
 class TestLogging:

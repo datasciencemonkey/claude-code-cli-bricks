@@ -46,11 +46,7 @@ GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKIL
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# PAT auto-rotation (short-lived tokens, background refresh)
-pat_rotator = PATRotator(
-    secret_scope=os.environ.get("PAT_SECRET_SCOPE"),
-    secret_key=os.environ.get("PAT_SECRET_KEY", "DATABRICKS_TOKEN"),
-)
+# PAT auto-rotation — initialized after sessions dict is defined (see below)
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = os.urandom(24)
@@ -63,6 +59,14 @@ socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[], logger
 # sessions_lock guards dict-level ops (add/remove/iterate); each session["lock"] guards per-session state
 sessions = {}
 sessions_lock = threading.Lock()
+
+# PAT auto-rotation (short-lived tokens, background refresh)
+# Only rotates while active sessions exist — stops when all sessions are reaped
+pat_rotator = PATRotator(
+    secret_scope=os.environ.get("PAT_SECRET_SCOPE"),
+    secret_key=os.environ.get("PAT_SECRET_KEY", "DATABRICKS_TOKEN"),
+    session_count_fn=lambda: len(sessions),
+)
 
 # SIGTERM graceful shutdown: notify clients before gunicorn stops the worker
 shutting_down = False
@@ -710,8 +714,6 @@ def get_version():
 @app.route("/api/session", methods=["POST"])
 def create_session():
     """Create a new terminal session."""
-    # Ensure PAT is fresh before handing a session to the user
-    pat_rotator.ensure_fresh()
     try:
         master_fd, slave_fd = pty.openpty()
         # Set up environment for the shell

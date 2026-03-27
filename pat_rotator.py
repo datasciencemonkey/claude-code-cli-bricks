@@ -1,8 +1,9 @@
 """Auto-rotate short-lived PATs in the background.
 
-Mints a new 2-hour PAT every 90 minutes, persists to app secret
+Mints a new 15-minute PAT every 10 minutes, persists to app secret
 (survives restart), writes to ~/.databrickscfg (immediate CLI/SDK use),
-and revokes the old PAT. Fixes #81.
+and revokes the old PAT. Rotation only runs while active sessions exist.
+Fixes #81.
 """
 
 import os
@@ -19,23 +20,28 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_LIFETIME = 900        # 15 minutes
 DEFAULT_ROTATION_INTERVAL = 600     # 10 minutes
-FRESHNESS_THRESHOLD = 480           # 8 minutes — rotate early if token is older than this
 
 
 class PATRotator:
-    """Background PAT rotation with secret persistence."""
+    """Background PAT rotation with secret persistence.
+
+    Rotation only runs while there are active sessions. When the last session
+    is reaped (24h timeout), rotation stops. When a new session is created,
+    rotation resumes.
+    """
 
     def __init__(self, host=None, rotation_interval=DEFAULT_ROTATION_INTERVAL,
                  token_lifetime=DEFAULT_TOKEN_LIFETIME,
-                 secret_scope=None, secret_key=None):
+                 secret_scope=None, secret_key=None,
+                 session_count_fn=None):
         self._host = ensure_https(host or os.environ.get("DATABRICKS_HOST", ""))
         self._rotation_interval = rotation_interval
         self._token_lifetime = token_lifetime
         self._secret_scope = secret_scope
         self._secret_key = secret_key
+        self._session_count_fn = session_count_fn or (lambda: 0)
         self._current_token = os.environ.get("DATABRICKS_TOKEN", "").strip() or None
         self._current_token_id = None
-        self._last_rotation_time = 0
         self._lock = threading.Lock()
         self._thread = None
         self._stop_event = threading.Event()
@@ -48,18 +54,6 @@ class PATRotator:
     def token(self):
         with self._lock:
             return self._current_token
-
-    def ensure_fresh(self):
-        """Ensure the current token is fresh — rotate immediately if stale.
-
-        Called on session creation so the user never starts with an expiring token.
-        """
-        if not self._current_token:
-            return
-        age = time.time() - self._last_rotation_time
-        if self._last_rotation_time == 0 or age > FRESHNESS_THRESHOLD:
-            logger.info(f"PAT token age {int(age)}s > threshold {FRESHNESS_THRESHOLD}s — rotating now")
-            self._rotate_once()
 
     def start(self):
         """Start the background rotation thread."""
@@ -80,12 +74,16 @@ class PATRotator:
         self._stop_event.set()
 
     def _rotation_loop(self):
-        """Background loop: sleep, rotate, repeat."""
+        """Background loop: sleep, rotate if sessions exist, repeat."""
         while not self._stop_event.is_set():
             self._stop_event.wait(timeout=self._rotation_interval)
             if self._stop_event.is_set():
                 break
             try:
+                session_count = self._session_count_fn()
+                if session_count == 0:
+                    logger.info("PAT rotation: no active sessions — skipping rotation")
+                    continue
                 self._rotate_once()
             except Exception as e:
                 logger.error(f"PAT rotation failed unexpectedly: {e}")
@@ -126,10 +124,9 @@ class PATRotator:
         with self._lock:
             self._current_token = new_token
             self._current_token_id = new_token_id
-            self._last_rotation_time = time.time()
         self._persist_token(new_token)
 
-        # 3. Revoke old token (best-effort — expires in 2h anyway)
+        # 3. Revoke old token (best-effort — expires naturally anyway)
         if old_token_id:
             try:
                 resp = requests.post(
