@@ -308,9 +308,27 @@ def run_setup():
 
 
 def get_token_owner():
-    """Get the owner email from DATABRICKS_TOKEN at startup."""
+    """Get the owner email. Priority: Apps API (app.creator) > PAT (current_user.me).
+
+    Uses the auto-provisioned SP to call the Apps API — no PAT needed for
+    owner resolution. Falls back to PAT-based lookup for backward compat.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    # 1. Try Apps API via SP credentials (no PAT needed)
+    app_name = os.environ.get("DATABRICKS_APP_NAME")
+    if app_name:
+        try:
+            w = WorkspaceClient()  # auto-detects SP credentials
+            app = w.apps.get(name=app_name)
+            owner = app.creator
+            logger.info(f"Owner resolved from app.creator: {owner}")
+            return owner
+        except Exception as e:
+            logger.warning(f"Could not resolve owner via Apps API: {e}")
+
+    # 2. Fallback: PAT-based resolution
     try:
-        from databricks.sdk import WorkspaceClient
         host = ensure_https(os.environ.get("DATABRICKS_HOST", ""))
         token = os.environ.get("DATABRICKS_TOKEN")
         if not host or not token:
@@ -930,14 +948,12 @@ def initialize_app(local_dev=False):
     if not local_dev:
         signal.signal(signal.SIGTERM, handle_sigterm)
 
-    # Remove OAuth credentials - force PAT auth only
-    os.environ.pop("DATABRICKS_CLIENT_ID", None)
-    os.environ.pop("DATABRICKS_CLIENT_SECRET", None)
+    # SP credentials preserved — needed for Apps API (owner resolution) and secret persistence
 
-    # Determine app owner from DATABRICKS_TOKEN
+    # Resolve owner: Apps API (app.creator via SP) > PAT (current_user.me)
     app_owner = get_token_owner()
     if app_owner:
-        logger.info(f"App owner (from token): {app_owner}")
+        logger.info(f"App owner: {app_owner}")
         os.environ["APP_OWNER"] = app_owner
     else:
         logger.warning("Could not determine app owner - authorization disabled")
