@@ -810,15 +810,22 @@ def configure_pat():
     except Exception as e:
         return jsonify({"error": f"Token validation failed: {e}"}), 400
 
-    # Set the token and start rotation
+    # Immediately mint a controlled short-lived token from the user-pasted PAT.
+    # This gives us a token ID we own — all future rotations can revoke the old one.
+    # The user-pasted PAT becomes unused after this (expires per its own lifetime).
     os.environ["DATABRICKS_TOKEN"] = token
     pat_rotator._current_token = token
     pat_rotator._current_token_id = None
-    pat_rotator._write_databrickscfg(token)
+    rotated = pat_rotator._rotate_once()
+    if rotated:
+        token = pat_rotator.token  # use the newly minted token from here on
+    else:
+        # Rotation failed — fall back to user-pasted token (still valid)
+        pat_rotator._write_databrickscfg(token)
     pat_rotator.start()
 
     # Configure all CLI tools (Claude, Codex, OpenCode, Gemini, Databricks)
-    _configure_all_cli_auth(token)
+    _configure_all_cli_auth(pat_rotator.token or token)
 
     # Run setup now that we have a valid token (installs CLIs, configures agents)
     # Only run if setup hasn't completed yet
