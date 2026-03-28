@@ -840,7 +840,7 @@
       // ── Tab shortcuts (Ctrl+Shift) ──
       // Ctrl+Shift+T : new tab
       if (e.ctrlKey && e.shiftKey && e.key === 'T') {
-        e.preventDefault(); createTab(); return;
+        e.preventDefault(); createTab({ newSession: true }); return;
       }
       // Ctrl+Shift+W : close active pane (closes tab if last pane)
       if (e.ctrlKey && e.shiftKey && e.key === 'W') {
@@ -1192,7 +1192,7 @@
     }
 
     // ── Pane Management ────────────────────────────────────────────
-    async function createPane(tab) {
+    async function createPane(tab, opts = {}) {
       const id = 'pane-' + (++paneIdCounter);
       const container = tab.paneContainer;
       const element = document.createElement('div');
@@ -1357,8 +1357,8 @@
             }
         }
         var sid = await createSession();
-      } else {
-        // PAT is valid — check for existing sessions to reattach
+      } else if (!opts.newSession) {
+        // PAT is valid, initial page load — check for existing sessions to reattach
         const sessionsResp = await fetch('/api/sessions');
         const liveSessions = (await sessionsResp.json()).filter(s => !s.exited);
 
@@ -1390,6 +1390,9 @@
           // Multiple sessions — show picker
           var sid = await showSessionPicker(term, liveSessions);
         }
+      } else {
+        // Split pane or new tab — always create fresh session
+        var sid = await createSession();
       }
 
       await sendResize(term.cols, term.rows, sid);
@@ -1435,7 +1438,7 @@
     }
 
     // ── Tab Management ──────────────────────────────────────────────
-    async function createTab() {
+    async function createTab(opts = {}) {
       if (tabs.length >= MAX_TABS) return null;
 
       const id = 'tab-' + (++tabIdCounter);
@@ -1464,8 +1467,8 @@
       // Switch to new tab (hides others)
       switchTab(id);
 
-      // Create first pane
-      await createPane(tab);
+      // Create first pane — pass opts through (newSession for user-initiated tabs)
+      await createPane(tab, opts);
 
       updateTabButtons();
       return tab;
@@ -1522,7 +1525,7 @@
       // If no tabs left, create a new one
       if (tabs.length === 0) {
         tabIdCounter = 0;
-        createTab();
+        createTab({ newSession: true });
         return;
       }
 
@@ -1634,7 +1637,7 @@
       status.textContent = 'Splitting...';
       status.style.display = '';
       try {
-        await createPane(tab);
+        await createPane(tab, { newSession: true });
         // Reset flex for even split
         tab.panes.forEach(p => { p.element.style.flex = '1'; });
         refitAllPanes();
@@ -1741,7 +1744,7 @@
     }
 
     // ── Pane toolbar buttons ────────────────────────────────────────
-    document.getElementById('new-tab-btn').addEventListener('click', () => createTab());
+    document.getElementById('new-tab-btn').addEventListener('click', () => createTab({ newSession: true }));
     document.getElementById('split-btn').addEventListener('click', () => splitPane());
     document.getElementById('close-pane-btn').addEventListener('click', () => closeActivePane());
     document.getElementById('next-pane-btn').addEventListener('click', () => cyclePaneFocus('next'));
