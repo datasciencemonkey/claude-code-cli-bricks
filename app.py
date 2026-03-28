@@ -670,6 +670,59 @@ def terminate_session(session_id, pid, master_fd):
         sessions.pop(session_id, None)
 
 
+def _get_session_process(pid):
+    """Return the name of the foreground child process for *pid*.
+
+    Uses ``pgrep -P`` to find children (works on both macOS and Linux),
+    then ``ps -o comm=`` to resolve the process name.
+
+    Returns:
+        str: process name, or ``"unknown"`` on any error / dead PID.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return "unknown"
+
+    try:
+        # Step 1 — find child PIDs via pgrep (cross-platform)
+        child_result = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if child_result.returncode == 0 and child_result.stdout.strip():
+            child_pids = child_result.stdout.strip().splitlines()
+            last_child_pid = child_pids[-1].strip()
+
+            # Step 2 — resolve child name
+            name_result = subprocess.run(
+                ["ps", "-o", "comm=", "-p", last_child_pid],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if name_result.returncode == 0 and name_result.stdout.strip():
+                name = name_result.stdout.strip().splitlines()[0].strip()
+                # ps may return the full path; take basename
+                return os.path.basename(name)
+
+        # Step 3 — no children: fall back to the process itself
+        self_result = subprocess.run(
+            ["ps", "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if self_result.returncode == 0 and self_result.stdout.strip():
+            name = self_result.stdout.strip().splitlines()[0].strip()
+            return os.path.basename(name)
+
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
 def cleanup_stale_sessions():
     """Background thread that removes sessions with no recent polling."""
     while True:
