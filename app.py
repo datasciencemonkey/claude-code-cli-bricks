@@ -20,6 +20,7 @@ from collections import deque
 import tomllib
 import requests
 
+import app_state
 from utils import ensure_https
 from pat_rotator import PATRotator
 
@@ -701,7 +702,7 @@ def cleanup_stale_sessions():
 def authorize_request():
     """Check authorization before processing any request."""
     # Skip auth for health check, setup status, and Socket.IO (has own auth via connect event)
-    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat") or request.path.startswith("/socket.io"):
+    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat", "/api/app-state") or request.path.startswith("/socket.io"):
         return None
 
     authorized, user = check_authorization()
@@ -746,6 +747,12 @@ def index():
 @app.route("/api/setup-status")
 def get_setup_status():
     return jsonify(_get_setup_state_snapshot())
+
+
+@app.route("/api/app-state")
+def get_app_state():
+    """Admin endpoint: persisted app state (owner, last rotation)."""
+    return jsonify(app_state.get_state())
 
 
 @app.route("/health")
@@ -1085,7 +1092,6 @@ def initialize_app(local_dev=False):
     # SP credentials preserved — needed for Apps API (owner resolution) and secret persistence
 
     # Resolve owner: Apps API (app.creator via SP) > PAT (current_user.me)
-    import app_state
     app_owner = get_token_owner()
     if app_owner:
         logger.info(f"App owner: {app_owner}")
