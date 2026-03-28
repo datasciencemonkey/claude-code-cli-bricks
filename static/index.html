@@ -1104,12 +1104,10 @@
     function cleanupPane(pane) {
       pollWorker.postMessage({ type: 'stop_poll', paneId: pane.id });
       if (pane.sessionId) {
-        // Leave WebSocket room if connected
+        // Leave WebSocket room — session stays alive for reattach
         if (wsConnected && socket) {
           socket.emit('leave_session', { session_id: pane.sessionId });
         }
-        navigator.sendBeacon('/api/session/close',
-          new Blob([JSON.stringify({ session_id: pane.sessionId })], { type: 'application/json' }));
         pane.sessionId = null;
       }
     }
