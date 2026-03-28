@@ -1137,14 +1137,16 @@
           term.write('\r\n');
           term.write('\x1b[1;36m  Existing sessions:\x1b[0m\r\n\r\n');
 
+          const attachedIds = new Set(getAllPanes().map(p => p.sessionId).filter(Boolean));
           sessions.forEach((s, i) => {
             const name = (s.label || s.process || 'bash').padEnd(14);
             const proc = s.label ? ' \x1b[90m[' + (s.process || 'bash') + ']\x1b[0m' : '';
             const ago = _formatAge(s.created_at);
             const idle = s.idle_seconds > 60 ? ', idle ' + _formatDuration(s.idle_seconds) : '';
+            const open = attachedIds.has(s.session_id) ? ' \x1b[1;33m(open)\x1b[0m' : '';
             term.write('  \x1b[1;32m' + (i + 1) + '\x1b[0m  ');
             term.write('\x1b[1;37m' + name + '\x1b[0m');
-            term.write('\x1b[90m(' + ago + idle + ')\x1b[0m' + proc + '\r\n');
+            term.write('\x1b[90m(' + ago + idle + ')\x1b[0m' + proc + open + '\r\n');
           });
 
           term.write('\r\n  \x1b[1;33mn\x1b[0m  New session\r\n');
@@ -1190,8 +1192,15 @@
 
           const num = parseInt(data);
           if (num >= 1 && num <= sessions.length) {
+            const picked = sessions[num - 1];
+            const openPanes = getAllPanes().filter(p => p.sessionId === picked.session_id);
+            if (openPanes.length > 0) {
+              term.write(data + '\r\n\x1b[1;33m  Already open in another pane.\x1b[0m\r\n');
+              setTimeout(renderPicker, 800);
+              return;
+            }
             disposable.dispose();
-            _doAttach(term, sessions[num - 1].session_id).then(sid => resolve({ sid, reattached: true }));
+            _doAttach(term, picked.session_id).then(sid => resolve({ sid, reattached: true }));
           } else if (data === 'd' || data === 'D') {
             dPrefix = true;
             term.write('d');
