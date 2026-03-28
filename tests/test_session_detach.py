@@ -147,3 +147,66 @@ class TestListSessions:
             }
         resp = self.client.get("/api/sessions")
         assert resp.get_json() == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for POST /api/session/attach
+# ---------------------------------------------------------------------------
+
+
+class TestAttachSession:
+    @pytest.fixture(autouse=True)
+    def setup_app(self):
+        import app as app_module
+        app_module.app_owner = "test@example.com"
+        self.client = app_module.app.test_client()
+        self.app_module = app_module
+        yield
+        with app_module.sessions_lock:
+            app_module.sessions.clear()
+
+    def test_returns_buffer_and_metadata(self):
+        now = time.time()
+        with self.app_module.sessions_lock:
+            self.app_module.sessions["sess-a"] = {
+                "pid": os.getpid(), "master_fd": 0,
+                "output_buffer": deque(["line1\r\n", "line2\r\n"], maxlen=1000),
+                "lock": threading.Lock(),
+                "last_poll_time": now - 300,
+                "created_at": now - 7200,
+            }
+        resp = self.client.post("/api/session/attach", json={"session_id": "sess-a"})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["session_id"] == "sess-a"
+        assert data["output"] == ["line1\r\n", "line2\r\n"]
+        assert "process" in data
+
+    def test_resets_last_poll_time(self):
+        old = time.time() - 600
+        with self.app_module.sessions_lock:
+            self.app_module.sessions["sess-b"] = {
+                "pid": os.getpid(), "master_fd": 0,
+                "output_buffer": deque(maxlen=1000),
+                "lock": threading.Lock(),
+                "last_poll_time": old, "created_at": old,
+            }
+        self.client.post("/api/session/attach", json={"session_id": "sess-b"})
+        sess = self.app_module.sessions["sess-b"]
+        assert sess["last_poll_time"] > old
+
+    def test_404_missing(self):
+        resp = self.client.post("/api/session/attach", json={"session_id": "nope"})
+        assert resp.status_code == 404
+
+    def test_404_exited(self):
+        with self.app_module.sessions_lock:
+            self.app_module.sessions["sess-x"] = {
+                "pid": 1, "master_fd": 0,
+                "output_buffer": deque(maxlen=1000),
+                "lock": threading.Lock(),
+                "last_poll_time": time.time(), "created_at": time.time(),
+                "exited": True,
+            }
+        resp = self.client.post("/api/session/attach", json={"session_id": "sess-x"})
+        assert resp.status_code == 404

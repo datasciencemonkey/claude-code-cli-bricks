@@ -755,7 +755,7 @@ def cleanup_stale_sessions():
 def authorize_request():
     """Check authorization before processing any request."""
     # Skip auth for health check, setup status, and Socket.IO (has own auth via connect event)
-    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat", "/api/app-state", "/api/sessions") or request.path.startswith("/socket.io"):
+    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat", "/api/app-state", "/api/sessions", "/api/session/attach") or request.path.startswith("/socket.io"):
         return None
 
     authorized, user = check_authorization()
@@ -828,6 +828,27 @@ def list_sessions():
             "idle_seconds": round(now - sess.get("last_poll_time", now), 1),
         })
     return jsonify(result)
+
+
+@app.route("/api/session/attach", methods=["POST"])
+def attach_session():
+    """Reattach to an existing session — returns buffered output for replay."""
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id", "")
+
+    sess = _get_session(session_id)
+    if not sess or sess.get("exited"):
+        return jsonify({"error": "Session not found or exited"}), 404
+
+    # Reset idle clock so the 24h reaper starts fresh
+    sess["last_poll_time"] = time.time()
+
+    return jsonify({
+        "session_id": session_id,
+        "output": list(sess["output_buffer"]),
+        "process": _get_session_process(sess["pid"]),
+        "created_at": sess.get("created_at"),
+    })
 
 
 @app.route("/health")
