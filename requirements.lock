@@ -398,12 +398,13 @@ charset-normalizer==3.4.5 \
     --hash=sha256:fc1c64934b8faf7584924143eb9db4770bbdb16659626e1a1a4d9efbcb68d947 \
     --hash=sha256:ff95a9283de8a457e6b12989de3f9f5193430f375d64297d323a615ea52cbdb3
     # via requests
-claude-agent-sdk==0.1.48 \
-    --hash=sha256:0d37e60bd2b17efc3f927dccef080f14897ab62cd1d0d67a4abc8a0e2d4f1006 \
-    --hash=sha256:39c1307daa17e42fa8a71180bb20af8a789d72d3891fc93519ff15540badcb83 \
-    --hash=sha256:543d70acba468eccfff836965a14b8ac88cf90809aeeb88431dfcea3ee9a2fa9 \
-    --hash=sha256:5761ff1d362e0f17c2b1bfd890d1c897f0aa81091e37bbd15b7d06f05ced552d \
-    --hash=sha256:ee294d3f02936c0b826119ffbefcf88c67731cf8c2d2cb7111ccc97f76344272
+claude-agent-sdk==0.1.50 \
+    --hash=sha256:2e44caf3e5bce56e26a18158acf3e1c2c2784cf8fa15e425afe92816c987eb1a \
+    --hash=sha256:44e75b9d076bd6030742729f99eb38777b80f052b22338d0a028d8190fc59e52 \
+    --hash=sha256:493d8cc43f4166291606749cf47b03e822f03b7f371cc77af697564017ccf579 \
+    --hash=sha256:7363d431dc6efd83fa658a045e14fa4357440352b548002bfb9096d8f04d143c \
+    --hash=sha256:858b1822451209b2c3ad8df27458168d29ac19fd628680853f7707ea017fea73 \
+    --hash=sha256:e15157792857ecb55274a71f08981efcfda2e169bee7894cbdc245d05ac43203
     # via -r requirements.txt
 click==8.3.1 \
     --hash=sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a \
@@ -551,9 +552,9 @@ cycler==0.12.1 \
     --hash=sha256:85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30 \
     --hash=sha256:88bb128f02ba341da8ef447245a9e138fae777f6a23943da4540077d3601eb1c
     # via matplotlib
-databricks-sdk==0.99.0 \
-    --hash=sha256:13ae35b064277074a79fcd5265260e92b352b5eb4e950438dcee895951bd86fd \
-    --hash=sha256:c0a6740bf21d430daa85461e193197ce1d0ac12209ce20e3cb9b67b32fe2bcfd
+databricks-sdk==0.102.0 \
+    --hash=sha256:75d1253276ee8f3dd5e7b00d62594b7051838435e618f74a8570a6dbd723ec12 \
+    --hash=sha256:8fa5f82317ee27cc46323c6e2543d2cfefb4468653f92ba558271043c6f72fb9
     # via
     #   -r requirements.txt
     #   mlflow-skinny
@@ -2158,9 +2159,9 @@ pyarrow==23.0.1 \
     --hash=sha256:fa8e51cb04b9f8c9c5ace6bab63af9a1f88d35c0d6cbf53e8c17c098552285e1 \
     --hash=sha256:fed7020203e9ef273360b9e45be52a2a47d3103caf156a30ace5247ffb51bdbd
     # via mlflow
-pyasn1==0.6.2 \
-    --hash=sha256:1eb26d860996a18e9b6ed05e7aae0e9fc21619fcee6af91cca9bad4fbea224bf \
-    --hash=sha256:9b59a2b25ba7e4f8197db7686c09fb33e658b98339fadb826e9512629017833b
+pyasn1==0.6.3 \
+    --hash=sha256:697a8ecd6d98891189184ca1fa05d1bb00e2f84b5977c481452050549c8a72cf \
+    --hash=sha256:a80184d120f0864a52a073acc6fc642847d0be408e7c7252f31390c0f4eadcde
     # via
     #   pyasn1-modules
     #   rsa
@@ -2314,9 +2315,9 @@ pygments==2.19.2 \
     --hash=sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887 \
     --hash=sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b
     # via rich
-pyjwt==2.11.0 \
-    --hash=sha256:35f95c1f0fbe5d5ba6e43f00271c275f7a1a4db1dab27bf708073b75318ea623 \
-    --hash=sha256:94a6bde30eb5c8e04fee991062b534071fd1439ef58d2adc9ccb823e7bcd0469
+pyjwt==2.12.1 \
+    --hash=sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c \
+    --hash=sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b
     # via mcp
 pyparsing==3.3.2 \
     --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d \
