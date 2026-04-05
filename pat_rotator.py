@@ -161,6 +161,57 @@ class PATRotator:
 
         return True
 
+    def revoke_bootstrap_tokens(self):
+        """Revoke all tokens that existed before the first rotation.
+
+        Called once after the bootstrap PAT is replaced by a controlled
+        short-lived token.  Lists all tokens, then revokes every one
+        that isn't the current coda-managed token.  Best-effort — any
+        that fail to revoke will expire naturally.
+        """
+        current_id = self._current_token_id
+        token = self._current_token
+        if not token or not current_id:
+            return
+
+        try:
+            resp = requests.get(
+                f"{self._host}/api/2.0/token/list",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Bootstrap cleanup: failed to list tokens ({resp.status_code})")
+                return
+        except requests.RequestException as e:
+            logger.warning(f"Bootstrap cleanup: list request failed: {e}")
+            return
+
+        token_infos = resp.json().get("token_infos", [])
+        revoked = 0
+        for info in token_infos:
+            tid = info.get("token_id")
+            if not tid or tid == current_id:
+                continue
+            try:
+                del_resp = requests.post(
+                    f"{self._host}/api/2.0/token/delete",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"token_id": tid},
+                    timeout=30
+                )
+                if del_resp.status_code == 200:
+                    comment = info.get("comment", "(no comment)")
+                    logger.info(f"Bootstrap cleanup: revoked token {tid} ({comment})")
+                    revoked += 1
+            except requests.RequestException:
+                pass  # best-effort
+
+        if revoked:
+            logger.info(f"Bootstrap cleanup: revoked {revoked} pre-rotation token(s)")
+        else:
+            logger.info("Bootstrap cleanup: no pre-rotation tokens to revoke")
+
     def _persist_token(self, token):
         """Write rotated token to all persistence layers."""
         os.environ["DATABRICKS_TOKEN"] = token
