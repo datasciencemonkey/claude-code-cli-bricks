@@ -161,13 +161,14 @@ class PATRotator:
 
         return True
 
-    def revoke_bootstrap_tokens(self):
-        """Revoke all tokens that existed before the first rotation.
+    def revoke_bootstrap_token(self):
+        """Revoke only the bootstrap PAT after the first rotation.
 
         Called once after the bootstrap PAT is replaced by a controlled
-        short-lived token.  Lists all tokens, then revokes every one
-        that isn't the current coda-managed token.  Best-effort — any
-        that fail to revoke will expire naturally.
+        short-lived token.  Lists all tokens, identifies the bootstrap
+        as the most-recently-created token without a "coda-auto-rotated"
+        comment, and revokes only that one.  Other user PATs (notebooks,
+        CI, etc.) are left untouched.
         """
         current_id = self._current_token_id
         token = self._current_token
@@ -188,29 +189,35 @@ class PATRotator:
             return
 
         token_infos = resp.json().get("token_infos", [])
-        revoked = 0
-        for info in token_infos:
-            tid = info.get("token_id")
-            if not tid or tid == current_id:
-                continue
-            try:
-                del_resp = requests.post(
-                    f"{self._host}/api/2.0/token/delete",
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={"token_id": tid},
-                    timeout=30
-                )
-                if del_resp.status_code == 200:
-                    comment = info.get("comment", "(no comment)")
-                    logger.info(f"Bootstrap cleanup: revoked token {tid} ({comment})")
-                    revoked += 1
-            except requests.RequestException:
-                pass  # best-effort
 
-        if revoked:
-            logger.info(f"Bootstrap cleanup: revoked {revoked} pre-rotation token(s)")
-        else:
-            logger.info("Bootstrap cleanup: no pre-rotation tokens to revoke")
+        # Find the bootstrap PAT: newest non-coda token that isn't the current one
+        candidates = [
+            info for info in token_infos
+            if info.get("token_id") != current_id
+            and info.get("comment", "") != "coda-auto-rotated"
+        ]
+        if not candidates:
+            logger.info("Bootstrap cleanup: no bootstrap token candidate found")
+            return
+
+        # The bootstrap PAT is the most recently created candidate
+        bootstrap = max(candidates, key=lambda t: t.get("creation_time", 0))
+        tid = bootstrap.get("token_id")
+        comment = bootstrap.get("comment", "(no comment)")
+
+        try:
+            del_resp = requests.post(
+                f"{self._host}/api/2.0/token/delete",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"token_id": tid},
+                timeout=30
+            )
+            if del_resp.status_code == 200:
+                logger.info(f"Bootstrap cleanup: revoked bootstrap PAT {tid} ({comment})")
+            else:
+                logger.warning(f"Bootstrap cleanup: failed to revoke {tid} ({del_resp.status_code})")
+        except requests.RequestException as e:
+            logger.warning(f"Bootstrap cleanup: revoke request failed: {e}")
 
     def _persist_token(self, token):
         """Write rotated token to all persistence layers."""

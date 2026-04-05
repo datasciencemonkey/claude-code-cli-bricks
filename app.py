@@ -927,8 +927,8 @@ def configure_pat():
     rotated = pat_rotator._rotate_once()
     if rotated:
         token = pat_rotator.token  # use the newly minted token from here on
-        # Revoke the bootstrap PAT and any other pre-rotation tokens (#98)
-        pat_rotator.revoke_bootstrap_tokens()
+        # Revoke only the bootstrap PAT — leave other user PATs intact (#98)
+        pat_rotator.revoke_bootstrap_token()
     else:
         # Rotation failed — fall back to user-pasted token (still valid)
         pat_rotator._write_databrickscfg(token)
