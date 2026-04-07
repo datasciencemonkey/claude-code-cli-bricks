@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.databricks/
+uv.lock
+pyproject.toml

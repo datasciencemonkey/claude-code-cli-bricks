@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 *.pyo
 .ruff_cache/
+uv.lock
 
 # Local config and secrets
 .env
