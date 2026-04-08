@@ -69,6 +69,7 @@ def _get_fresh_token() -> str | None:
 
     return _TOKEN_CACHE.get("token")  # stale is better than nothing
 
+
 # Diagnostic logging — writes to stderr which goes to ~/.content-filter-proxy.log
 log = logging.getLogger("content-filter-proxy")
 log.setLevel(logging.INFO)

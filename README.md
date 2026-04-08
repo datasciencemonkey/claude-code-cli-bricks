@@ -60,7 +60,6 @@ This isn't just a terminal in the cloud. Running coding agents on Databricks giv
 | 🎤 **Voice Input** | Dictate commands with your mic (Option+V) |
 | 📋 **Image Paste** | Paste or drag-and-drop images into the terminal — saved to `~/uploads/`, path inserted automatically |
 | ⌨️ **Customizable** | Fonts, font sizes, themes — all persisted across sessions |
-| 🐍 **Loading Screen** | Play snake while setup steps run in parallel |
 | 🔄 **Workspace Sync** | Every `git commit` auto-syncs to `/Workspace/Users/{you}/projects/` |
 | ✏️ **Micro Editor** | Modern terminal editor, pre-installed |
 | ⚙️ **Databricks CLI** | Installed at boot, configured interactively on first session |
@@ -204,6 +203,7 @@ This template repo opens that vision up for every Databricks user — no IDE set
 | **DeepWiki** | Ask questions about any GitHub repo — gets AI-powered answers from the codebase |
 | **Exa** | Web search and code context retrieval for up-to-date information |
 
+
 </details>
 
 <details>
@@ -221,8 +221,8 @@ This template repo opens that vision up for every Databricks user — no IDE set
          │ on first load                       │ on startup
          ▼                                     ▼
 ┌─────────────────────┐               ┌─────────────────────┐
-│   Loading Screen    │               │   Background Setup  │
-│   (snake game)      │               │   (8 steps, 6 ║)    │
+│   Setup Progress    │               │   Background Setup  │
+│   (inline UI)       │               │   (11 steps, 5→6 ║) │
 └─────────────────────┘               └─────────────────────┘
                                                │
                                                ▼
@@ -235,18 +235,18 @@ This template repo opens that vision up for every Databricks user — no IDE set
 ### Startup Flow
 
 1. Gunicorn starts, calls `initialize_app()` via `post_worker_init` hook
-2. App immediately serves the loading screen (snake game)
-3. Background thread runs setup: git config and micro editor run sequentially, then 6 agent setups (Claude, Codex, OpenCode, Gemini, Databricks CLI, MLflow) run in parallel via `ThreadPoolExecutor`
-4. `/api/setup-status` endpoint reports progress to the loading screen
-5. Once complete, the loading screen transitions to the terminal UI
+2. App serves the terminal UI with inline setup progress
+3. Background thread runs setup: 5 sequential steps (git config, micro editor, GitHub CLI, Databricks CLI upgrade, content-filter proxy), then 6 agent setups (Claude, Codex, OpenCode, Gemini, Databricks CLI config, MLflow) run in parallel via `ThreadPoolExecutor`
+4. `/api/setup-status` endpoint reports progress to the UI
+5. Once complete, the terminal becomes interactive
 
 ### API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Loading screen (during setup) or terminal UI |
+| `/` | GET | Terminal UI with inline setup progress |
 | `/health` | GET | Health check with session count and setup status |
-| `/api/setup-status` | GET | Setup progress for loading screen |
+| `/api/setup-status` | GET | Setup progress for the UI |
 | `/api/version` | GET | App version |
 | `/api/session` | POST | Create new terminal session |
 | `/api/input` | POST | Send input to terminal |
@@ -283,9 +283,9 @@ This template repo opens that vision up for every Databricks user — no IDE set
 | `DATABRICKS_TOKEN` | No | Optional. If not set, the app prompts for a token on first session. Auto-rotated every 10 minutes |
 | `HOME` | Yes | Set to `/app/python/source_code` in app.yaml |
 | `ANTHROPIC_MODEL` | No | Claude model name (default: `databricks-claude-opus-4-6`) |
-| `CODEX_MODEL` | No | Codex model name (default: `databricks-gpt-5-2`) |
+| `CODEX_MODEL` | No | Codex model name (default: `databricks-gpt-5-3-codex`) |
 | `GEMINI_MODEL` | No | Gemini model name (default: `databricks-gemini-3-1-pro`) |
-| `DATABRICKS_GATEWAY_HOST` | No | AI Gateway URL (recommended) |
+| `DATABRICKS_GATEWAY_HOST` | No | AI Gateway URL override. Auto-discovered from `DATABRICKS_WORKSPACE_ID` if unset |
 
 ### Security Model
 
@@ -302,32 +302,46 @@ Production uses `workers=1` (PTY state is process-local), `threads=16` (concurre
 
 ```
 coding-agents-in-databricks/
-├── app.py                   # Flask backend + PTY management + setup orchestration
-├── app.yaml.template        # Databricks Apps deployment config template
-├── gunicorn.conf.py         # Gunicorn production server config
-├── requirements.txt         # Python dependencies
-├── setup_claude.py          # Claude Code CLI + MCP configuration
-├── setup_codex.py           # Codex CLI configuration
-├── setup_gemini.py          # Gemini CLI configuration
-├── setup_opencode.py        # OpenCode configuration
-├── setup_databricks.py      # Databricks CLI configuration
-├── setup_mlflow.py          # MLflow tracing auto-configuration
-├── sync_to_workspace.py     # Post-commit hook: sync to Workspace
-├── install_micro.sh         # Micro editor installer
-├── utils.py                 # Utility functions (ensure_https)
+├── app.py                       # Flask backend + PTY management + setup orchestration
+├── app_state.py                 # Shared app state (setup progress, session registry)
+├── app.yaml.template            # Databricks Apps deployment config template
+├── cli_auth.py                  # Interactive PAT setup + CLI credential writer
+├── content_filter_proxy.py      # Proxy that sanitises empty-content blocks for OpenCode
+├── gunicorn.conf.py             # Gunicorn production server config
+├── pat_rotator.py               # Background PAT auto-rotation (10-min cycle)
+├── pyproject.toml               # Package metadata + uv config (supply-chain guardrails)
+├── requirements.txt             # Compiled from pyproject.toml (Dependabot compatibility)
+├── requirements.lock            # Hash-pinned lockfile (auto-regenerated by CI)
+├── Makefile                     # Deploy, redeploy, status, and cleanup targets
+├── setup_claude.py              # Claude Code CLI + MCP configuration
+├── setup_codex.py               # Codex CLI configuration
+├── setup_gemini.py              # Gemini CLI configuration
+├── setup_opencode.py            # OpenCode configuration
+├── setup_databricks.py          # Databricks CLI configuration
+├── setup_mlflow.py              # MLflow tracing auto-configuration
+├── setup_proxy.py               # Content-filter proxy startup
+├── sync_to_workspace.py         # Post-commit hook: sync to Workspace
+├── install_micro.sh             # Micro editor installer
+├── install_gh.sh                # GitHub CLI installer (OS/arch-aware)
+├── install_databricks_cli.sh    # Databricks CLI upgrade script
+├── utils.py                     # Utility functions (ensure_https)
 ├── static/
-│   ├── index.html           # Terminal UI (xterm.js + split panes + WebSocket)
-│   ├── loading.html         # Loading screen with snake game
-│   ├── poll-worker.js       # Web Worker for HTTP polling fallback
+│   ├── index.html               # Terminal UI (xterm.js + split panes + WebSocket)
+│   ├── favicon.svg              # App favicon
+│   ├── poll-worker.js           # Web Worker for HTTP polling fallback
 │   └── lib/
-│       ├── xterm.js         # xterm.js terminal emulator
-│       └── socket.io.min.js # Vendored Socket.IO client
+│       ├── xterm.js             # xterm.js terminal emulator
+│       └── socket.io.min.js     # Vendored Socket.IO client
 ├── .claude/
-│   └── skills/              # 39 pre-installed skills
+│   └── skills/                  # 39 pre-installed skills
+├── .github/
+│   └── workflows/
+│       ├── dependency-audit.yml # Weekly CVE audit + lockfile drift check
+│       └── update-lockfile.yml  # Auto-regenerate requirements.lock on push
 └── docs/
-    ├── deployment.md        # Full Databricks Apps deployment guide
-    ├── prd/                 # Product requirement documents
-    └── plans/               # Design documentation
+    ├── deployment.md            # Full Databricks Apps deployment guide
+    ├── prd/                     # Product requirement documents
+    └── plans/                   # Design documentation
 ```
 
 </details>
@@ -336,4 +350,4 @@ coding-agents-in-databricks/
 
 ## Technologies
 
-Flask · Flask-SocketIO · Socket.IO · Gunicorn · xterm.js · Python PTY · Databricks SDK · Databricks AI Gateway · MLflow
+Flask · Flask-SocketIO · Socket.IO · Gunicorn · xterm.js · Python PTY · uv · Databricks SDK · Databricks AI Gateway · MLflow

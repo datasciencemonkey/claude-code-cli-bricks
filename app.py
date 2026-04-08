@@ -21,7 +21,7 @@ import tomllib
 import requests
 
 import app_state
-from utils import ensure_https
+from utils import ensure_https, get_gateway_host
 from pat_rotator import PATRotator
 
 # Sanitize DATABRICKS_TOKEN early — the platform sometimes injects trailing
@@ -313,7 +313,7 @@ def _configure_all_cli_auth(token):
     claude_dir = os.path.join(home, ".claude")
     os.makedirs(claude_dir, exist_ok=True)
 
-    gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
+    gateway_host = get_gateway_host()
     databricks_host = ensure_https(os.environ.get("DATABRICKS_HOST", "").rstrip("/"))
 
     if gateway_host:
@@ -1002,13 +1002,14 @@ def configure_pat():
 
     # Immediately mint a controlled short-lived token from the user-pasted PAT.
     # This gives us a token ID we own — all future rotations can revoke the old one.
-    # The user-pasted PAT becomes unused after this (expires per its own lifetime).
     os.environ["DATABRICKS_TOKEN"] = token
     pat_rotator._current_token = token
     pat_rotator._current_token_id = None
     rotated = pat_rotator._rotate_once()
     if rotated:
         token = pat_rotator.token  # use the newly minted token from here on
+        # Revoke only the bootstrap PAT — leave other user PATs intact (#98)
+        pat_rotator.revoke_bootstrap_token()
     else:
         # Rotation failed — fall back to user-pasted token (still valid)
         pat_rotator._write_databrickscfg(token)
@@ -1042,12 +1043,12 @@ def create_session():
         # Remove Claude Code env vars so the browser terminal isn't seen as nested
         shell_env.pop("CLAUDECODE", None)
         shell_env.pop("CLAUDE_CODE_SESSION", None)
-        # Strip ALL Databricks runtime env vars so CLI/SDK reads entirely from
-        # ~/.databrickscfg (kept current by PAT rotation). Leaving DATABRICKS_HOST
-        # without DATABRICKS_TOKEN causes the SDK to detect an Azure workspace and
-        # try Azure auth methods instead of reading the token from the config file.
-        for key in [k for k in shell_env if k.startswith("DATABRICKS_")]:
-            shell_env.pop(key)
+        # Remove DATABRICKS_TOKEN and DATABRICKS_HOST so CLI/SDK reads from
+        # ~/.databrickscfg (always current after rotation) instead of inheriting
+        # a stale env var snapshot. The SDK skips config file loading when
+        # DATABRICKS_HOST is set in env (even without credentials).
+        shell_env.pop("DATABRICKS_TOKEN", None)
+        shell_env.pop("DATABRICKS_HOST", None)
         # Ensure HOME is set correctly
         if not shell_env.get("HOME") or shell_env["HOME"] == "/":
             shell_env["HOME"] = "/app/python/source_code"

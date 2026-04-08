@@ -11,7 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from utils import ensure_https, get_npm_version
+from utils import ensure_https, get_gateway_host, get_npm_version
 
 # content-filter proxy local proxy — sanitizes empty content blocks before reaching Databricks
 # (see https://github.com/sst/opencode/issues/5028)
@@ -74,11 +74,10 @@ if not host or not token:
 # Strip trailing slash and ensure https:// prefix
 host = ensure_https(host.rstrip("/"))
 
-# Use DATABRICKS_GATEWAY_HOST if available (new AI Gateway), otherwise fall back to current gateway (DATABRICKS_HOST)
-gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
+gateway_host = get_gateway_host()
 gateway_token = os.environ.get("DATABRICKS_TOKEN", "") if gateway_host else ""
 if gateway_host and not gateway_token:
-    print("Warning: DATABRICKS_GATEWAY_HOST set but DATABRICKS_TOKEN missing, falling back to DATABRICKS_HOST")
+    print("Warning: AI Gateway resolved but DATABRICKS_TOKEN missing, falling back to DATABRICKS_HOST")
     gateway_host = ""
 
 if gateway_host:
@@ -153,8 +152,8 @@ if gateway_host:
                     "compatibility": "compatible"
                 },
                 "models": {
-                    "databricks-gpt-5-2-codex": {
-                        "name": "GPT 5.2 Codex (Databricks)",
+                    "databricks-gpt-5-3-codex": {
+                        "name": "GPT 5.3 Codex (Databricks)",
                         "limit": {
                             "context": 200000,
                             "output": 16384
@@ -286,6 +285,6 @@ print(f"OpenCode auth configured: {auth_path}")
 print(f"\nOpenCode ready! Default model: {anthropic_model}")
 print("  opencode                          # Start OpenCode TUI")
 if gateway_host:
-    print("  opencode -m databricks-openai/databricks-gpt-5-2-codex  # Use GPT 5.2 Codex")
+    print("  opencode -m databricks-openai/databricks-gpt-5-3-codex  # Use GPT 5.3 Codex")
 print("  opencode -m databricks/databricks-gemini-2-5-flash  # Use Gemini")
 print(f"  opencode -m databricks/{anthropic_model} # Use Claude (default)")
