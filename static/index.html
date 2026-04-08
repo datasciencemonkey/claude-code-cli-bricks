@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Cascadia+Code&family=Fira+Code&family=JetBrains+Mono&family=Source+Code+Pro&display=swap" rel="stylesheet">
   <style>
     html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-    body { font-family: monospace; transition: background 0.3s, color 0.3s; }
+    body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; transition: background 0.3s, color 0.3s; }
     #status { position: absolute; top: 10px; left: 10px; z-index: 1000; }
 
     /* Tab bar */
@@ -603,6 +603,7 @@
     });
     themeSelect.value = currentThemeName;
     themeSelect.addEventListener('change', e => applyTheme(e.target.value));
+    applyTheme(currentThemeName); // Apply theme to body on initial load
 
     const fontFamilySelect = document.getElementById('font-family-select');
     Object.keys(fontFamilies).forEach(name => {
