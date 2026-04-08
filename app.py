@@ -248,6 +248,29 @@ def _setup_git_config():
     os.chmod(post_commit, 0o755)
     logger.info(f"Post-commit hook written to {post_commit}")
 
+    # Write `wsync` command to ~/.local/bin for manual workspace sync
+    local_bin = os.path.join(home, ".local", "bin")
+    os.makedirs(local_bin, exist_ok=True)
+    wsync_path = os.path.join(local_bin, "wsync")
+    with open(wsync_path, "w") as f:
+        f.write('#!/bin/bash\n')
+        f.write('# Manual sync to Databricks Workspace\n')
+        f.write('REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n')
+        f.write('if [ -z "$REPO_ROOT" ]; then\n')
+        f.write('    echo "Error: not inside a git repo"\n')
+        f.write('    exit 1\n')
+        f.write('fi\n')
+        f.write('APP_DIR="/app/python/source_code"\n')
+        f.write('SYNC_SCRIPT="$APP_DIR/sync_to_workspace.py"\n')
+        f.write('if [ ! -f "$SYNC_SCRIPT" ]; then\n')
+        f.write('    echo "Error: sync script not found"\n')
+        f.write('    exit 1\n')
+        f.write('fi\n')
+        f.write('echo "Syncing $REPO_ROOT to Databricks Workspace..."\n')
+        f.write('uv run --project "$APP_DIR" python "$SYNC_SCRIPT" "$REPO_ROOT"\n')
+    os.chmod(wsync_path, 0o755)
+    logger.info(f"wsync command written to {wsync_path}")
+
     # Reinit app source git to remove template origin (Databricks Apps only)
     _reinit_app_git()
 
@@ -299,6 +322,20 @@ def _configure_all_cli_auth(token):
         anthropic_base_url = f"{databricks_host}/serving-endpoints/anthropic"
 
     settings = {
+        "theme": "dark",
+        "permissions": {
+            "defaultMode": "auto",
+            "allow": [
+                "Bash(databricks *)",
+                "Bash(uv *)",
+                "Bash(git *)",
+                "Bash(make *)",
+                "Bash(python *)",
+                "Bash(pytest *)",
+                "Bash(ruff *)",
+                "Bash(wsync)",
+            ],
+        },
         "env": {
             "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-opus-4-6"),
             "ANTHROPIC_BASE_URL": anthropic_base_url,
@@ -1005,9 +1042,12 @@ def create_session():
         # Remove Claude Code env vars so the browser terminal isn't seen as nested
         shell_env.pop("CLAUDECODE", None)
         shell_env.pop("CLAUDE_CODE_SESSION", None)
-        # Remove DATABRICKS_TOKEN so CLI/SDK reads from ~/.databrickscfg (always
-        # current after rotation) instead of inheriting a stale env var snapshot
-        shell_env.pop("DATABRICKS_TOKEN", None)
+        # Strip ALL Databricks runtime env vars so CLI/SDK reads entirely from
+        # ~/.databrickscfg (kept current by PAT rotation). Leaving DATABRICKS_HOST
+        # without DATABRICKS_TOKEN causes the SDK to detect an Azure workspace and
+        # try Azure auth methods instead of reading the token from the config file.
+        for key in [k for k in shell_env if k.startswith("DATABRICKS_")]:
+            shell_env.pop(key)
         # Ensure HOME is set correctly
         if not shell_env.get("HOME") or shell_env["HOME"] == "/":
             shell_env["HOME"] = "/app/python/source_code"

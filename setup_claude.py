@@ -31,6 +31,20 @@ if token:
         print(f"Using Databricks Host: {databricks_host}")
 
     settings = {
+        "theme": "dark",
+        "permissions": {
+            "defaultMode": "auto",
+            "allow": [
+                "Bash(databricks *)",
+                "Bash(uv *)",
+                "Bash(git *)",
+                "Bash(make *)",
+                "Bash(python *)",
+                "Bash(pytest *)",
+                "Bash(ruff *)",
+                "Bash(wsync)",
+            ],
+        },
         "env": {
             "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-opus-4-6"),
             "ANTHROPIC_BASE_URL": anthropic_base_url,

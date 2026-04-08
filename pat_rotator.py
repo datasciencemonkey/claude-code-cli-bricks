@@ -1,6 +1,6 @@
 """Auto-rotate short-lived PATs in the background.
 
-Mints a new 15-minute PAT every 10 minutes, writes to ~/.databrickscfg
+Mints a new 4-hour PAT every 3 hours, writes to ~/.databrickscfg
 (immediate CLI/SDK use), and revokes the old PAT. Rotation only runs
 while active sessions exist. If the app restarts, the interactive PAT
 prompt re-provisions credentials on next session. Fixes #81.
@@ -18,8 +18,8 @@ from utils import ensure_https
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOKEN_LIFETIME = 900        # 15 minutes
-DEFAULT_ROTATION_INTERVAL = 600     # 10 minutes
+DEFAULT_TOKEN_LIFETIME = 14400      # 4 hours
+DEFAULT_ROTATION_INTERVAL = 10800   # 3 hours
 
 
 class PATRotator:
