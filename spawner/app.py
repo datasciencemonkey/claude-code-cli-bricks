@@ -429,7 +429,7 @@ def index():
     """Serve the spawner UI with user context injected via data attributes."""
     import html as html_mod
 
-    email = request.headers.get("X-Forwarded-Email", "unknown")
+    email = (request.headers.get("X-Forwarded-Email") or "unknown").lower()
     app_name = app_name_from_email(email) if email != "unknown" else "coding-agents-you"
 
     index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
@@ -452,7 +452,7 @@ def health():
 @app.route("/api/status")
 def api_status():
     """Check if user already has a deployed instance."""
-    email = request.headers.get("X-Forwarded-Email", "")
+    email = (request.headers.get("X-Forwarded-Email") or "").lower()
     host = DATABRICKS_HOST
 
     app_name = app_name_from_email(email)
@@ -488,7 +488,7 @@ def api_provision():
     # Identity: use email from POST body (admin provisioning for another user),
     # fall back to SSO header (self-provisioning)
     body = request.get_json(silent=True) or {}
-    email = (body.get("email") or request.headers.get("X-Forwarded-Email", "")).strip()
+    email = (body.get("email") or request.headers.get("X-Forwarded-Email", "")).strip().lower()
     if not email:
         return jsonify({"success": False, "error": "No user identity provided"}), 400
 
@@ -560,7 +560,7 @@ def api_provision_bulk():
     results = []
 
     for email in emails:
-        email = email.strip()
+        email = email.strip().lower()
         if not email:
             continue
         app_name = app_name_from_email(email)
