@@ -611,8 +611,41 @@ _redeploy_job: dict | None = None
 _redeploy_lock = threading.Lock()
 
 
+def _deploy_with_backoff(
+    host: str,
+    headers: dict,
+    app_name: str,
+    source_code_path: str,
+    max_retries: int = 5,
+    base_delay: float = 2.0,
+) -> requests.Response:
+    """Deploy a single app with exponential backoff on 429 (rate limit) responses."""
+    for attempt in range(max_retries):
+        resp = requests.post(
+            f"{host}/api/2.0/apps/{app_name}/deployments",
+            headers=headers,
+            json={"source_code_path": source_code_path},
+        )
+        if resp.status_code != 429:
+            return resp
+        delay = min(base_delay * (2**attempt), 60)
+        print(f"  Rate limited deploying {app_name}, retrying in {delay:.0f}s "
+              f"(attempt {attempt + 1}/{max_retries})")
+        time.sleep(delay)
+    return resp  # Return last 429 response if all retries exhausted
+
+
+# Max concurrent deploy requests to avoid hitting API rate limits
+_REDEPLOY_BATCH_SIZE = 3
+_REDEPLOY_BATCH_DELAY = 2.0  # seconds between batches
+
+
 def redeploy_all_apps(host: str, admin_token: str):
-    """Redeploy all coding-agents-* apps from the shared template."""
+    """Redeploy all coding-agents-* apps from the shared template.
+
+    Deploys in batches of 3 with a delay between batches to avoid API
+    rate limiting (429). Individual deploys retry with exponential backoff.
+    """
     global _redeploy_job
     source_code_path = "/Workspace/Shared/apps/coding-agents"
     headers = {"Authorization": f"Bearer {admin_token}"}
@@ -641,10 +674,8 @@ def redeploy_all_apps(host: str, admin_token: str):
                 _redeploy_job["completed"] = i
 
             try:
-                deploy_resp = requests.post(
-                    f"{host}/api/2.0/apps/{name}/deployments",
-                    headers=headers,
-                    json={"source_code_path": source_code_path},
+                deploy_resp = _deploy_with_backoff(
+                    host, headers, name, source_code_path
                 )
                 if deploy_resp.ok:
                     with _redeploy_lock:
@@ -657,6 +688,10 @@ def redeploy_all_apps(host: str, admin_token: str):
                 with _redeploy_lock:
                     _redeploy_job["apps"][i]["status"] = "error"
                     _redeploy_job["apps"][i]["error"] = str(exc)[:200]
+
+            # Pause between batches to stay under rate limits
+            if (i + 1) % _REDEPLOY_BATCH_SIZE == 0 and i + 1 < len(targets):
+                time.sleep(_REDEPLOY_BATCH_DELAY)
 
         with _redeploy_lock:
             _redeploy_job["completed"] = len(targets)
