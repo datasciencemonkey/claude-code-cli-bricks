@@ -305,6 +305,9 @@ def _configure_all_cli_auth(token):
     """
     import json
 
+    from utils import resolve_and_cache_gateway
+    resolve_and_cache_gateway()
+
     home = os.environ.get("HOME", "/app/python/source_code")
     if not home or home == "/":
         home = "/app/python/source_code"
@@ -380,6 +383,10 @@ def run_setup():
     with setup_lock:
         setup_state["status"] = "running"
         setup_state["started_at"] = time.time()
+
+    # Probe AI Gateway once; result is cached in _GATEWAY_RESOLVED for subprocesses
+    from utils import resolve_and_cache_gateway
+    resolve_and_cache_gateway()
 
     # --- Sequential prerequisites (git identity + editor) ---
     # Git config — done directly in Python, not as a subprocess
