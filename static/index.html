@@ -1266,7 +1266,10 @@
       if (data.output && data.output.length > 0) {
         data.output.forEach(line => term.write(line));
       }
-      // Show reattach message at the bottom without overwriting buffer content
+      // Ensure we're on the main screen buffer after replaying output that may
+      // contain alternate-screen sequences (e.g. from Claude Code no-flicker mode).
+      // This is a no-op if already on the main screen.
+      term.write('\x1b[?1049l');
       // Tell PTY the current terminal size so it redraws correctly
       await sendResize(term.cols, term.rows, sessionId);
       return sessionId;
