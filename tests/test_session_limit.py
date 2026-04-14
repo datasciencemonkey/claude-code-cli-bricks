@@ -63,9 +63,14 @@ class TestSessionLimitConstant:
         assert app_module.MAX_CONCURRENT_SESSIONS == 5
 
     def test_max_concurrent_sessions_reads_from_env(self):
-        with mock.patch.dict("os.environ", {"MAX_CONCURRENT_SESSIONS": "3"}):
-            result = int(__import__("os").environ.get("MAX_CONCURRENT_SESSIONS", "5"))
-            assert result == 3
+        """Verify that patching the module-level constant changes the cap."""
+        app_module = _get_app()
+        original = app_module.MAX_CONCURRENT_SESSIONS
+        try:
+            app_module.MAX_CONCURRENT_SESSIONS = 3
+            assert app_module.MAX_CONCURRENT_SESSIONS == 3
+        finally:
+            app_module.MAX_CONCURRENT_SESSIONS = original
 
 
 # ---------------------------------------------------------------------------
@@ -157,20 +162,28 @@ class TestSessionCreationAtLimit:
 
 
 # ---------------------------------------------------------------------------
-# 4. Exited sessions don't count toward the limit
+# 4. Removed sessions free up slots (sessions are popped from dict, not marked)
 # ---------------------------------------------------------------------------
 
-class TestExitedSessionsExcluded:
+class TestRemovedSessionsFreeSlots:
 
-    def test_exited_sessions_not_counted(self):
+    def test_removing_session_frees_slot(self):
+        """After removing a session from the dict, a new one can be created."""
         app_module = _get_app()
         limit = app_module.MAX_CONCURRENT_SESSIONS
-        # Fill with exited sessions — these should NOT block creation
-        sids = [f"exited-{i}" for i in range(limit)]
+        sids = [f"full-{i}" for i in range(limit)]
         try:
             for sid in sids:
-                _add_session(app_module, sid, exited=True)
+                _add_session(app_module, sid)
+            # At limit — verify rejection
             client = app_module.app.test_client()
+            with mock.patch.object(app_module, "check_authorization", return_value=(True, "test-user")):
+                resp = client.post("/api/session", json={})
+            assert resp.status_code == 429
+            # Remove one session (simulates terminate_session popping it)
+            _cleanup(app_module, sids[0])
+            sids = sids[1:]
+            # Now creation should succeed
             with mock.patch.object(app_module, "check_authorization", return_value=(True, "test-user")), \
                  mock.patch("pty.openpty", return_value=(10, 11)), \
                  mock.patch("subprocess.Popen") as mock_popen, \
@@ -178,27 +191,22 @@ class TestExitedSessionsExcluded:
                  mock.patch("threading.Thread") as mock_thread:
                 mock_popen.return_value.pid = 99999
                 mock_thread.return_value.start = mock.Mock()
-                resp = client.post("/api/session", json={"label": "after-exited"})
+                resp = client.post("/api/session", json={"label": "after-removal"})
             assert resp.status_code == 200
             data = resp.get_json()
             sids.append(data["session_id"])
         finally:
             _cleanup(app_module, *sids)
 
-    def test_mix_of_active_and_exited(self):
+    def test_count_based_on_dict_size(self):
+        """The cap is based on len(sessions), not an exited flag."""
         app_module = _get_app()
         limit = app_module.MAX_CONCURRENT_SESSIONS
-        sids = []
+        sids = [f"slot-{i}" for i in range(limit - 1)]
         try:
-            # Add limit-1 active + limit exited = only active ones count
-            for i in range(limit - 1):
-                sid = f"active-{i}"
-                _add_session(app_module, sid, exited=False)
-                sids.append(sid)
-            for i in range(limit):
-                sid = f"dead-{i}"
-                _add_session(app_module, sid, exited=True)
-                sids.append(sid)
+            for sid in sids:
+                _add_session(app_module, sid)
+            # One slot remaining — creation should succeed
             client = app_module.app.test_client()
             with mock.patch.object(app_module, "check_authorization", return_value=(True, "test-user")), \
                  mock.patch("pty.openpty", return_value=(10, 11)), \
@@ -207,7 +215,7 @@ class TestExitedSessionsExcluded:
                  mock.patch("threading.Thread") as mock_thread:
                 mock_popen.return_value.pid = 99999
                 mock_thread.return_value.start = mock.Mock()
-                resp = client.post("/api/session", json={"label": "still-room"})
+                resp = client.post("/api/session", json={"label": "last-slot"})
             assert resp.status_code == 200
             data = resp.get_json()
             sids.append(data["session_id"])

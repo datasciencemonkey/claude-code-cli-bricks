@@ -26,19 +26,23 @@ class TestClipboardAddonFile:
 
     def test_addon_exports_clipboard_addon(self):
         path = os.path.join(STATIC_LIB, "addon-clipboard.js")
-        content = open(path).read()
+        with open(path) as f:
+            content = f.read()
         assert "ClipboardAddon" in content, "addon-clipboard.js does not export ClipboardAddon"
 
     def test_addon_handles_osc_52(self):
         path = os.path.join(STATIC_LIB, "addon-clipboard.js")
-        content = open(path).read()
+        with open(path) as f:
+            content = f.read()
         # The addon should register an OSC handler for sequence 52
-        assert "52" in content, "addon-clipboard.js does not reference OSC 52"
-        assert "registerOscHandler" in content, "addon-clipboard.js does not register an OSC handler"
+        assert re.search(r'registerOscHandler\S*\(52', content), (
+            "addon-clipboard.js does not register an OSC 52 handler"
+        )
 
     def test_addon_uses_navigator_clipboard(self):
         path = os.path.join(STATIC_LIB, "addon-clipboard.js")
-        content = open(path).read()
+        with open(path) as f:
+            content = f.read()
         assert "navigator.clipboard" in content, "addon should use navigator.clipboard API"
 
 
