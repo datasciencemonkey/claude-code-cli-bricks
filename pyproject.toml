@@ -9,7 +9,7 @@ dependencies = [
     "simple-websocket>=1.0",
     "claude-agent-sdk",
     "databricks-sdk>=0.20.0",
-    "mlflow-tracing>=3.4",
+    "mlflow-tracing==3.10.1",
     "opentelemetry-exporter-otlp-proto-grpc",
     "requests",
     "cryptography>=46.0.6",
