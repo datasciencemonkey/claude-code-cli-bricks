@@ -1166,6 +1166,7 @@
         }
         pane.sessionId = null;
       }
+      updateSessionBadge();
     }
 
     function cleanupAllPanes() {
@@ -1223,6 +1224,7 @@
               }).then(() => {
                 sessions.splice(num - 1, 1);
                 pendingDelete = false;
+                updateSessionBadge();
                 if (sessions.length === 0) {
                   disposable.dispose();
                   createSession().then(sid => resolve({ sid, reattached: false }));
