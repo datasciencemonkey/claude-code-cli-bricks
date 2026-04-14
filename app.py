@@ -43,6 +43,7 @@ except Exception:
 SESSION_TIMEOUT_SECONDS = 86400      # No poll for 24 hours = dead session
 CLEANUP_INTERVAL_SECONDS = 900       # Check for stale sessions every 15 min
 GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "5"))
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -956,6 +957,11 @@ def configure_pat():
 @app.route("/api/session", methods=["POST"])
 def create_session():
     """Create a new terminal session."""
+    with sessions_lock:
+        active = sum(1 for s in sessions.values() if not s.get("exited", False))
+    if active >= MAX_CONCURRENT_SESSIONS:
+        return jsonify({"error": f"Maximum {MAX_CONCURRENT_SESSIONS} concurrent sessions reached. Close an existing session first."}), 429
+
     data = request.get_json(silent=True) or {}
     label = data.get("label", "")
     try:
