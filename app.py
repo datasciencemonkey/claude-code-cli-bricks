@@ -605,7 +605,7 @@ def read_pty_output(session_id, fd):
         try:
             readable, _, errors = select.select([fd], [], [fd], 0.05)
             if readable or errors:
-                output = os.read(fd, 4096)
+                output = os.read(fd, 65536)
                 if not output:
                     # EOF — process exited
                     break

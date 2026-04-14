@@ -894,6 +894,23 @@
       }
     }, true);  // capture phase — fire before xterm.js
 
+    // ── Write Batching (prevents escape sequence fragmentation) ────
+    // PTY output arrives in fixed-size chunks that can split multi-byte
+    // escape sequences. Batching per animation frame (~16ms) lets split
+    // sequences rejoin before xterm.js parses them.
+    function createWriteBatcher(term) {
+      let pending = '';
+      let rafId = null;
+      function flush() {
+        if (pending) { term.write(pending); pending = ''; }
+        rafId = null;
+      }
+      return function batchWrite(data) {
+        pending += data;
+        if (!rafId) { rafId = requestAnimationFrame(flush); }
+      };
+    }
+
     // ── Session / IO (parameterized by sessionId) ──────────────────
     const status = document.getElementById('status');
 
@@ -997,10 +1014,12 @@
       });
 
       // Receive terminal output pushed from server (AC-8)
+      // Output is batched per-animation-frame to prevent escape sequence
+      // fragmentation when PTY chunks split mid-sequence (e.g. no-flicker mode).
       socket.on('terminal_output', (data) => {
         const pane = getAllPanes().find(p => p.sessionId === data.session_id);
         if (pane && data.output) {
-          pane.term.write(data.output);
+          pane.batchWrite(data.output);
         }
       });
 
@@ -1072,7 +1091,7 @@
           if (data.timeout_warning) {
             pane.term.write('\r\n\x1b[33m\u26A0 Session idle \u2014 will terminate soon if no activity.\x1b[0m\r\n');
           }
-          if (data.output) pane.term.write(data.output);
+          if (data.output) pane.batchWrite(data.output);
           break;
         }
         case 'session_ended':
@@ -1566,7 +1585,8 @@
         term.write('\r\n');
       }
 
-      const pane = { id, element, term, fitAddon, searchAddon, sessionId: sid };
+      const pane = { id, element, term, fitAddon, searchAddon, sessionId: sid,
+        batchWrite: createWriteBatcher(term) };
       term.onData(data => sendInput(data, pane.sessionId));
 
       // Join WebSocket room if connected; otherwise start HTTP polling (AC-11, AC-16)
