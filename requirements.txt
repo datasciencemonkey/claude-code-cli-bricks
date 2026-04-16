@@ -113,7 +113,7 @@ opentelemetry-proto==1.40.0
     # via mlflow-skinny
 opentelemetry-sdk==1.40.0
     # via mlflow-skinny
-opentelemetry-semantic-conventions==0.61b0
+opentelemetry-semantic-conventions==0.62b0
     # via opentelemetry-sdk
 packaging==26.0
     # via mlflow-skinny
