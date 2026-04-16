@@ -77,6 +77,12 @@ def get_admin_token() -> str:
 _provision_jobs: dict[str, dict] = {}
 _provision_lock = threading.Lock()
 
+# Limit concurrent provisioning to avoid overwhelming the Apps API.
+# All threads start immediately but only N can proceed past the semaphore;
+# the rest queue up and are released as earlier provisions complete each API call.
+_PROVISION_CONCURRENCY = 3
+_provision_semaphore = threading.Semaphore(_PROVISION_CONCURRENCY)
+
 MAX_APP_NAME_LENGTH = 63
 
 # UC Volume for offline Python wheel installation
@@ -125,27 +131,49 @@ def _ensure_owner_description(
         print(f"  Warning: could not update description ({resp.status_code}): {resp.text[:200]}")
 
 
-def create_app(host: str, admin_token: str, app_name: str, owner_email: str) -> dict:
+def create_app(
+    host: str,
+    admin_token: str,
+    app_name: str,
+    owner_email: str,
+    max_retries: int = 5,
+    base_delay: float = 2.0,
+) -> dict:
     """Create the Databricks App via POST /api/2.0/apps.
 
     The app is created with the admin SP token. Owner identity is stored in the
     description field as 'owner:{email}' so CODA's get_token_owner() can resolve
     it without requiring the user's PAT.
+
+    Retries with exponential backoff on 429/400 responses that are common when
+    creating many apps in rapid succession (bulk provisioning).
     """
-    resp = requests.post(
-        f"{host}/api/2.0/apps",
-        headers={"Authorization": f"Bearer {admin_token}"},
-        json={
-            "name": app_name,
-            "description": f"owner:{owner_email}",
-        },
-    )
-    # 409 means app already exists -- ensure description has owner:{email}
-    if resp.status_code == 409:
-        _ensure_owner_description(host, admin_token, app_name, owner_email)
-        return check_existing_app(host, admin_token, app_name)
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    payload = {"name": app_name, "description": f"owner:{owner_email}"}
+
+    for attempt in range(max_retries):
+        resp = requests.post(f"{host}/api/2.0/apps", headers=headers, json=payload)
+
+        # 409 means app already exists -- ensure description has owner:{email}
+        if resp.status_code == 409:
+            _ensure_owner_description(host, admin_token, app_name, owner_email)
+            return check_existing_app(host, admin_token, app_name)
+
+        if resp.ok:
+            return resp.json()
+
+        if resp.status_code in (429, 400):
+            delay = min(base_delay * (2**attempt), 60)
+            print(f"  Create {app_name}: {resp.status_code}, retrying in {delay:.0f}s "
+                  f"(attempt {attempt + 1}/{max_retries})")
+            time.sleep(delay)
+            continue
+
+        # Non-retryable error — raise immediately
+        resp.raise_for_status()
+
     resp.raise_for_status()
-    return resp.json()
+    return resp.json()  # unreachable but keeps linters happy
 
 
 def wait_for_compute_active(
@@ -176,16 +204,34 @@ def deploy_app(
     oauth_token: str,
     app_name: str,
     source_code_path: str,
+    max_retries: int = 5,
+    base_delay: float = 2.0,
 ) -> dict:
-    """Deploy the app via POST /api/2.0/apps/{name}/deployments."""
-    resp = requests.post(
-        f"{host}/api/2.0/apps/{app_name}/deployments",
-        headers={"Authorization": f"Bearer {oauth_token}"},
-        json={"source_code_path": source_code_path},
-    )
-    if not resp.ok:
-        raise RuntimeError(f"{resp.status_code} from deploy API: {resp.text}")
-    return resp.json()
+    """Deploy the app via POST /api/2.0/apps/{name}/deployments.
+
+    Retries with exponential backoff on 429 (rate limit) and 400 (transient
+    API errors common during bulk provisioning).
+    """
+    headers = {"Authorization": f"Bearer {oauth_token}"}
+    last_resp = None
+    for attempt in range(max_retries):
+        resp = requests.post(
+            f"{host}/api/2.0/apps/{app_name}/deployments",
+            headers=headers,
+            json={"source_code_path": source_code_path},
+        )
+        if resp.ok:
+            return resp.json()
+        last_resp = resp
+        if resp.status_code in (429, 400):
+            delay = min(base_delay * (2**attempt), 60)
+            print(f"  Deploy {app_name}: {resp.status_code}, retrying in {delay:.0f}s "
+                  f"(attempt {attempt + 1}/{max_retries})")
+            time.sleep(delay)
+            continue
+        # Non-retryable error
+        break
+    raise RuntimeError(f"{last_resp.status_code} from deploy API: {last_resp.text}")
 
 
 def _grant_with_retry(
@@ -362,46 +408,50 @@ def provision_app_async(host: str, admin_token: str, email: str, app_name: str):
 
     Zero-PAT flow: uses the admin SP token for all operations. The user's email
     (from SSO) is stored in the app description for owner resolution.
+
+    Uses _provision_semaphore to limit concurrency — when called from bulk
+    provisioning, threads wait their turn instead of all hitting the API at once.
     """
     source_code_path = "/Workspace/Shared/apps/coding-agents"
 
-    try:
-        # Step 1: Create app (with owner in description)
-        _add_step(app_name, 1, "creating_app", f"Creating app '{app_name}'...")
-        app_result = create_app(host, admin_token, app_name, email)
-        sp_client_id = app_result.get("service_principal_client_id", "")
+    with _provision_semaphore:
+        try:
+            # Step 1: Create app (with owner in description)
+            _add_step(app_name, 1, "creating_app", f"Creating app '{app_name}'...")
+            app_result = create_app(host, admin_token, app_name, email)
+            sp_client_id = app_result.get("service_principal_client_id", "")
 
-        # Step 2: Grant SP access to UC Volume (for offline wheel install)
-        if sp_client_id:
+            # Step 2: Grant SP access to UC Volume (for offline wheel install)
+            if sp_client_id:
+                _add_step(
+                    app_name, 2, "granting_access", "Granting service principal access..."
+                )
+                grant_sp_volume_access(host, admin_token, app_result)
+
+            # Step 3: Wait for compute
             _add_step(
-                app_name, 2, "granting_access", "Granting service principal access..."
+                app_name,
+                3,
+                "waiting_for_compute",
+                "Waiting for compute to be ready (60-90s)...",
             )
-            grant_sp_volume_access(host, admin_token, app_result)
+            wait_for_compute_active(host, admin_token, app_name)
 
-        # Step 3: Wait for compute
-        _add_step(
-            app_name,
-            3,
-            "waiting_for_compute",
-            "Waiting for compute to be ready (60-90s)...",
-        )
-        wait_for_compute_active(host, admin_token, app_name)
+            # Step 4: Deploy
+            _add_step(app_name, 4, "deploying", "Deploying app...")
+            deploy_app(host, admin_token, app_name, source_code_path)
 
-        # Step 4: Deploy
-        _add_step(app_name, 4, "deploying", "Deploying app...")
-        deploy_app(host, admin_token, app_name, source_code_path)
+            # Step 5: Wait for app to be running
+            _add_step(app_name, 5, "starting", "Waiting for app to start...")
+            _wait_for_app_running(host, admin_token, app_name)
 
-        # Step 5: Wait for app to be running
-        _add_step(app_name, 5, "starting", "Waiting for app to start...")
-        _wait_for_app_running(host, admin_token, app_name)
+            app_url = app_result.get("url", app_result.get("app_url", ""))
+            _add_step(app_name, 6, "complete", "App is running!")
+            _update_job(app_name, status="complete", app_url=app_url)
 
-        app_url = app_result.get("url", app_result.get("app_url", ""))
-        _add_step(app_name, 6, "complete", "App is running!")
-        _update_job(app_name, status="complete", app_url=app_url)
-
-    except Exception as exc:
-        _add_step(app_name, -1, "error", str(exc))
-        _update_job(app_name, status="error", error=str(exc))
+        except Exception as exc:
+            _add_step(app_name, -1, "error", str(exc))
+            _update_job(app_name, status="error", error=str(exc))
 
 
 def _wait_for_app_running(
@@ -540,11 +590,16 @@ def api_provision():
 
 @app.route("/api/provision-bulk", methods=["POST"])
 def api_provision_bulk():
-    """Provision apps for multiple users in parallel.
+    """Provision apps for multiple users with throttled concurrency.
 
     Accepts {"emails": ["a@example.com", "b@example.com", ...]}.
-    Kicks off a background thread per user (reuses the single-user flow)
-    and returns the list of app names to poll via /api/provision-status/<name>.
+    Registers all jobs immediately and returns the list to poll.
+    Threads are spawned per user but gated by _provision_semaphore
+    (max 3 concurrent), with exponential backoff on API errors.
+
+    Unlike the single-user endpoint, we skip the per-email check_existing_app
+    call to avoid 54+ sequential API calls blocking the HTTP response.
+    Each provisioning thread handles existing apps via create_app (409 → re-use).
     """
     try:
         admin_token = get_admin_token()
@@ -565,12 +620,7 @@ def api_provision_bulk():
             continue
         app_name = app_name_from_email(email)
 
-        # Skip if already running or already provisioning
-        existing = check_existing_app(host, admin_token, app_name)
-        if existing.get("deployed") and existing.get("state") == "RUNNING":
-            results.append({"email": email, "app_name": app_name, "status": "already_running"})
-            continue
-
+        # Skip if already being provisioned in this session
         with _provision_lock:
             existing_job = _provision_jobs.get(app_name)
             if existing_job and existing_job["status"] == "in_progress":
@@ -578,7 +628,7 @@ def api_provision_bulk():
                 continue
 
             _provision_jobs[app_name] = {
-                "steps": [{"step": 0, "status": "starting", "message": f"Provisioning for {email}..."}],
+                "steps": [{"step": 0, "status": "queued", "message": "Queued for provisioning..."}],
                 "status": "in_progress",
                 "app_url": "",
                 "app_name": app_name,
@@ -619,20 +669,20 @@ def _deploy_with_backoff(
     max_retries: int = 5,
     base_delay: float = 2.0,
 ) -> requests.Response:
-    """Deploy a single app with exponential backoff on 429 (rate limit) responses."""
+    """Deploy a single app with exponential backoff on 429/400 responses."""
     for attempt in range(max_retries):
         resp = requests.post(
             f"{host}/api/2.0/apps/{app_name}/deployments",
             headers=headers,
             json={"source_code_path": source_code_path},
         )
-        if resp.status_code != 429:
+        if resp.status_code not in (429, 400):
             return resp
         delay = min(base_delay * (2**attempt), 60)
-        print(f"  Rate limited deploying {app_name}, retrying in {delay:.0f}s "
+        print(f"  {resp.status_code} deploying {app_name}, retrying in {delay:.0f}s "
               f"(attempt {attempt + 1}/{max_retries})")
         time.sleep(delay)
-    return resp  # Return last 429 response if all retries exhausted
+    return resp  # Return last error response if all retries exhausted
 
 
 # Max concurrent deploy requests to avoid hitting API rate limits
