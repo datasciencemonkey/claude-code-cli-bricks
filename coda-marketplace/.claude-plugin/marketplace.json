@@ -26,6 +26,25 @@
         "memory",
         "hooks"
       ]
+    },
+    {
+      "name": "coda-databricks-skills",
+      "source": "./plugins/coda-databricks-skills",
+      "description": "Databricks platform skills synced from databricks-solutions/ai-dev-kit: Agent Bricks, AI/BI Dashboards, AI Functions, Databricks App (Python), BDD Testing, Bundles, Config, DBSQL, Docs, Execution Compute, Genie, Iceberg, Jobs, Lakebase (Autoscale + Provisioned), Metric Views, MLflow Evaluation, Model Serving, Python SDK, Spark SDP, Structured Streaming, Synthetic Data Gen, Unity Catalog, Unstructured PDF Generation, Vector Search, Zerobus Ingest, and Spark Python Data Source.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Databricks Field Engineering",
+        "url": "https://github.com/databricks-solutions/ai-dev-kit"
+      },
+      "category": "platform",
+      "keywords": [
+        "databricks",
+        "ai-dev-kit",
+        "spark",
+        "unity-catalog",
+        "mlflow",
+        "lakebase"
+      ]
     }
   ]
 }

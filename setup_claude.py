@@ -57,6 +57,7 @@ if token:
         },
         "enabledPlugins": {
             "coda-essentials@coda": True,
+            "coda-databricks-skills@coda": True,
         },
         "permissions": {
             "defaultMode": "auto",
