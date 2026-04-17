@@ -157,6 +157,35 @@ if token:
     settings_path = claude_dir / "settings.json"
     settings_path.write_text(json.dumps(settings, indent=2))
     print(f"Claude configured: {settings_path}")
+
+    # 1b. Secure-egress network detection. If docs.databricks.com is blocked
+    # (common in enterprise Azure workspaces with a restrictive outbound
+    # allowlist), append a note to ~/.claude/CLAUDE.md telling agents to
+    # substitute learn.microsoft.com/en-us/azure/databricks/ — Microsoft
+    # Learn mirrors the Azure Databricks docs one-to-one and is usually
+    # allowlisted by default. Idempotent via a marker comment.
+    import urllib.request  # stdlib, no extra deps
+    _egress_marker = "<!-- coda-egress-fallback -->"
+    _egress_note = (
+        f"\n{_egress_marker}\n"
+        "## Documentation fallback — secure-egress workspace\n"
+        "`docs.databricks.com` is blocked from this environment. "
+        "When looking up Databricks docs, rewrite URLs:\n"
+        "- `docs.databricks.com/azure/en/X` → `learn.microsoft.com/en-us/azure/databricks/X`\n"
+        "- `docs.databricks.com/aws/en/X`   → `learn.microsoft.com/en-us/azure/databricks/X`\n"
+        "Microsoft Learn mirrors the Azure Databricks docs one-to-one and is usually reachable.\n"
+    )
+    try:
+        urllib.request.urlopen("https://docs.databricks.com/", timeout=3)
+        print("docs.databricks.com reachable — no egress fallback needed")
+    except Exception as _e:
+        print(f"docs.databricks.com unreachable ({type(_e).__name__}) — installing learn.microsoft.com fallback note")
+        _claude_md = claude_dir / "CLAUDE.md"
+        _existing = _claude_md.read_text() if _claude_md.exists() else ""
+        if _egress_marker not in _existing:
+            with open(_claude_md, "a") as _f:
+                _f.write(_egress_note)
+            print(f"Appended egress fallback note to {_claude_md}")
 else:
     print("No DATABRICKS_TOKEN — skipping settings.json (will be configured after PAT setup)")
 
