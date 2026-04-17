@@ -106,8 +106,8 @@ if gateway_host:
                     "apiKey": "{env:DATABRICKS_TOKEN}"
                 },
                 "models": {
-                    "databricks-claude-opus-4-6": {
-                        "name": "Claude Opus 4.6 (Databricks)",
+                    "databricks-claude-opus-4-7": {
+                        "name": "Claude Opus 4.7 (Databricks)",
                         "limit": {
                             "context": 200000,
                             "output": 16384
@@ -198,8 +198,8 @@ else:
                     "apiKey": "{env:DATABRICKS_TOKEN}"
                 },
                 "models": {
-                    "databricks-claude-opus-4-6": {
-                        "name": "Claude Opus 4.6 (Databricks)",
+                    "databricks-claude-opus-4-7": {
+                        "name": "Claude Opus 4.7 (Databricks)",
                         "limit": {
                             "context": 200000,
                             "output": 16384

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "databricks": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Databricks Model Serving (via content-filter proxy)",
+      "options": {
+        "baseURL": "http://127.0.0.1:4000",
+        "apiKey": "{env:DATABRICKS_TOKEN}"
+      },
+      "models": {
+        "databricks-claude-opus-4-7": {
+          "name": "Claude Opus 4.7 (Databricks)",
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "databricks-claude-sonnet-4-6": {
+          "name": "Claude Sonnet 4.6 (Databricks)",
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          }
+        },
+        "databricks-gemini-2-5-flash": {
+          "name": "Gemini 2.5 Flash (Databricks)",
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "databricks-gemini-2-5-pro": {
+          "name": "Gemini 2.5 Pro (Databricks)",
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        },
+        "databricks-gemini-3-1-pro": {
+          "name": "Gemini 3.1 Pro (Databricks)",
+          "limit": {
+            "context": 1000000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "mcp": {
+    "deepwiki": {
+      "type": "remote",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "enabled": true,
+      "oauth": false
+    },
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabled": true
+    }
+  },
+  "model": "databricks/databricks-claude-opus-4-7"
+}

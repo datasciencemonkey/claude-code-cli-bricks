@@ -155,7 +155,7 @@ class TestSettingsMerge:
     def test_preserves_existing_env_vars(self, tmp_path):
         write_existing_settings(tmp_path, {
             "env": {
-                "ANTHROPIC_MODEL": "databricks-claude-opus-4-6",
+                "ANTHROPIC_MODEL": "databricks-claude-opus-4-7",
                 "ANTHROPIC_BASE_URL": "https://test.com/anthropic",
                 "ANTHROPIC_AUTH_TOKEN": "secret",
             }
@@ -163,7 +163,7 @@ class TestSettingsMerge:
         result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
         assert result.returncode == 0
         settings = read_settings(tmp_path)
-        assert settings["env"]["ANTHROPIC_MODEL"] == "databricks-claude-opus-4-6"
+        assert settings["env"]["ANTHROPIC_MODEL"] == "databricks-claude-opus-4-7"
         assert settings["env"]["ANTHROPIC_BASE_URL"] == "https://test.com/anthropic"
         assert settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "secret"
         assert settings["env"]["MLFLOW_CLAUDE_TRACING_ENABLED"] == "false"
