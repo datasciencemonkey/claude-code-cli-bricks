@@ -60,6 +60,7 @@ if token:
 
     settings = {
         "theme": "dark",
+        "outputStyle": "Explanatory",
         "permissions": {
             "defaultMode": "auto",
             "allow": [
