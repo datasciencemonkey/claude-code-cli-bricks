@@ -42,8 +42,38 @@ if hooks_dir.exists():
 import datetime as _dt
 plugins_state_dir = home / ".claude" / "plugins"
 plugins_state_dir.mkdir(exist_ok=True)
+cache_root = plugins_state_dir / "cache" / "coda"
+cache_root.mkdir(parents=True, exist_ok=True)
 
-_now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# Stage each plugin into ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.
+# Claude Code requires this layout — even directory-source marketplaces get
+# their plugins copied into a versioned cache path, and `installPath` in
+# installed_plugins.json must point at the cache, not at the source.
+# Verified by inspecting a working fe-vibe install where the marketplace
+# source lives at ~/Repos/vibe-ebc-fix but plugin installPath is
+# ~/.claude/plugins/cache/fe-vibe/fe-html-slides/1.1.4.
+PLUGIN_VERSION = "0.1.0"
+plugin_cache_paths = {}
+for pname in ("coda-essentials", "coda-databricks-skills"):
+    src_p = marketplace_dir / "plugins" / pname
+    dst_p = cache_root / pname / PLUGIN_VERSION
+    if dst_p.exists():
+        shutil.rmtree(dst_p)
+    shutil.copytree(src_p, dst_p)
+    plugin_cache_paths[pname] = dst_p
+    print(f"Staged plugin {pname} -> {dst_p}")
+
+# Re-point hooks_dir at the cached coda-essentials so settings.json hooks
+# reference the copy Claude Code actually loads, not the source tree.
+# (Source and cache have identical contents; this keeps the hook path
+# consistent with the plugin loader's view of the filesystem.)
+hooks_dir = plugin_cache_paths["coda-essentials"] / "hooks"
+if hooks_dir.exists():
+    for hook in hooks_dir.iterdir():
+        if hook.is_file():
+            os.chmod(hook, 0o755)
+
+_now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 (plugins_state_dir / "known_marketplaces.json").write_text(json.dumps({
     "coda": {
@@ -58,15 +88,15 @@ _now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     "plugins": {
         "coda-essentials@coda": [{
             "scope": "user",
-            "installPath": str(plugin_dir),
-            "version": "0.1.0",
+            "installPath": str(plugin_cache_paths["coda-essentials"]),
+            "version": PLUGIN_VERSION,
             "installedAt": _now,
             "lastUpdated": _now,
         }],
         "coda-databricks-skills@coda": [{
             "scope": "user",
-            "installPath": str(marketplace_dir / "plugins" / "coda-databricks-skills"),
-            "version": "0.1.0",
+            "installPath": str(plugin_cache_paths["coda-databricks-skills"]),
+            "version": PLUGIN_VERSION,
             "installedAt": _now,
             "lastUpdated": _now,
         }],
