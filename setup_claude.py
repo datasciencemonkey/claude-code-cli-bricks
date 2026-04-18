@@ -31,6 +31,49 @@ if hooks_dir.exists():
             os.chmod(hook, 0o755)
     print(f"coda-essentials hooks ready: {hooks_dir}")
 
+# Register the bundled marketplace with Claude Code's plugin system. Just
+# listing the marketplace in settings.json's extraKnownMarketplaces and the
+# plugin in enabledPlugins is NOT enough — Claude Code also requires state
+# files under ~/.claude/plugins/ (known_marketplaces.json + installed_plugins.json)
+# before plugin content (skills, commands, agents, hooks) is actually loaded.
+# For a directory-source marketplace the "installLocation" is the source path,
+# no copy needed. We write these here so fresh CODA instances get /cache-stats,
+# /til, and the marketplace skills available on first Claude Code session.
+import datetime as _dt
+plugins_state_dir = home / ".claude" / "plugins"
+plugins_state_dir.mkdir(exist_ok=True)
+
+_now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+(plugins_state_dir / "known_marketplaces.json").write_text(json.dumps({
+    "coda": {
+        "source": {"source": "directory", "path": str(marketplace_dir)},
+        "installLocation": str(marketplace_dir),
+        "lastUpdated": _now,
+    }
+}, indent=2))
+
+(plugins_state_dir / "installed_plugins.json").write_text(json.dumps({
+    "version": 2,
+    "plugins": {
+        "coda-essentials@coda": [{
+            "scope": "user",
+            "installPath": str(plugin_dir),
+            "version": "0.1.0",
+            "installedAt": _now,
+            "lastUpdated": _now,
+        }],
+        "coda-databricks-skills@coda": [{
+            "scope": "user",
+            "installPath": str(marketplace_dir / "plugins" / "coda-databricks-skills"),
+            "version": "0.1.0",
+            "installedAt": _now,
+            "lastUpdated": _now,
+        }],
+    },
+}, indent=2))
+print(f"Registered coda marketplace + plugins in {plugins_state_dir}")
+
 # 1. Write settings.json for Databricks model serving (requires DATABRICKS_TOKEN)
 token = os.environ.get("DATABRICKS_TOKEN", "").strip()
 if token:
