@@ -104,6 +104,30 @@ _now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 }, indent=2))
 print(f"Registered coda marketplace + plugins in {plugins_state_dir}")
 
+# Defence-in-depth: also copy commands/agents into ~/.claude/commands/
+# and ~/.claude/agents/ at the user level. Claude Code's plugin loader
+# on the Databricks Apps runtime didn't surface plugin-bundled commands
+# on first attempt; user-level paths are the canonical fallback and
+# are always scanned regardless of plugin state. Running both keeps the
+# marketplace as the source of truth for content while guaranteeing the
+# slash commands + subagents actually work.
+user_commands_dir = claude_dir / "commands"
+user_commands_dir.mkdir(exist_ok=True)
+user_agents_dir = claude_dir / "agents"
+user_agents_dir.mkdir(exist_ok=True)
+
+for src_commands in [plugin_cache_paths["coda-essentials"] / "commands"]:
+    if src_commands.exists():
+        for f in src_commands.glob("*.md"):
+            shutil.copy2(str(f), str(user_commands_dir / f.name))
+print(f"User-level commands synced: {sorted(p.name for p in user_commands_dir.glob('*.md'))}")
+
+for src_agents in [plugin_cache_paths["coda-essentials"] / "agents"]:
+    if src_agents.exists():
+        for f in src_agents.glob("*.md"):
+            shutil.copy2(str(f), str(user_agents_dir / f.name))
+print(f"User-level agents synced: {sorted(p.name for p in user_agents_dir.glob('*.md'))}")
+
 # 1. Write settings.json for Databricks model serving (requires DATABRICKS_TOKEN)
 token = os.environ.get("DATABRICKS_TOKEN", "").strip()
 if token:
