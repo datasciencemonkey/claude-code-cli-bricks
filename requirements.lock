@@ -48,6 +48,7 @@ cachetools==7.0.5 \
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
 certifi==2026.2.25 \
     --hash=sha256:027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa \
     --hash=sha256:e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7
@@ -360,6 +361,7 @@ databricks-sdk==0.102.0 \
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
 fastapi==0.135.3 \
     --hash=sha256:9b0f590c813acd13d0ab43dd8494138eb58e484bfac405db1f3187cfc5810d98 \
     --hash=sha256:bd6d7caf1a2bdd8d676843cdcd2287729572a1ef524fc4d65c17ae002a1be654
@@ -565,12 +567,17 @@ mlflow-skinny==3.11.1 \
     --hash=sha256:82ffd5f6980320b4ac19f741e7a754faa1d01707e632b002ea68e04fd25a0535 \
     --hash=sha256:86ce63491349f6713afc8a4ef0bf77a8314d0e79e03753cb150d6c860a0b0475
     # via -r requirements.txt
+mlflow-tracing==3.11.1 \
+    --hash=sha256:cb63cee16385d081467ec5bee4807fe1af59ddfdf04be4c79e7a7813b1002193 \
+    --hash=sha256:fa82df64dacf8293b714ae666440fe7c1902c6470c024df389bb91e9de3106d9
+    # via -r requirements.txt
 opentelemetry-api==1.40.0 \
     --hash=sha256:159be641c0b04d11e9ecd576906462773eb97ae1b657730f0ecf64d32071569f \
     --hash=sha256:82dd69331ae74b06f6a874704be0cfaa49a1650e1537d4a813b86ecef7d0ecf9
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
 opentelemetry-proto==1.40.0 \
@@ -579,12 +586,14 @@ opentelemetry-proto==1.40.0 \
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
 opentelemetry-sdk==1.40.0 \
     --hash=sha256:18e9f5ec20d859d268c7cb3c5198c8d105d073714db3de50b593b8c1345a48f2 \
     --hash=sha256:787d2154a71f4b3d81f20524a8ce061b7db667d24e46753f32a7bc48f1c1f3f1
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
 opentelemetry-semantic-conventions==0.61b0 \
     --hash=sha256:072f65473c5d7c6dc0355b27d6c9d1a679d63b6d4b4b16a9773062cb7e31192a \
     --hash=sha256:fa530a96be229795f8cef353739b618148b0fe2b4b3f005e60e262926c4d38e2
@@ -597,6 +606,7 @@ packaging==26.0 \
     # via
     #   -r requirements.txt
     #   mlflow-skinny
+    #   mlflow-tracing
 protobuf==6.33.6 \
     --hash=sha256:0cd27b587afca21b7cfa59a74dcbd48a50f0a6400cfb59391340ad729d91d326 \
     --hash=sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901 \
@@ -612,6 +622,7 @@ protobuf==6.33.6 \
     #   -r requirements.txt
     #   databricks-sdk
     #   mlflow-skinny
+    #   mlflow-tracing
     #   opentelemetry-proto
 pyasn1==0.6.3 \
     --hash=sha256:697a8ecd6d98891189184ca1fa05d1bb00e2f84b5977c481452050549c8a72cf \
@@ -639,6 +650,7 @@ pydantic==2.12.5 \
     #   fastapi
     #   mcp
     #   mlflow-skinny
+    #   mlflow-tracing
     #   pydantic-settings
 pydantic-core==2.41.5 \
     --hash=sha256:0177272f88ab8312479336e1d777f6b124537d47f2123f89cb37e0accea97f90 \

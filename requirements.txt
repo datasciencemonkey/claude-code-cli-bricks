@@ -22,7 +22,9 @@ blinker==1.9.0
     #   flask
     #   flask-socketio
 cachetools==7.0.5
-    # via mlflow-skinny
+    # via
+    #   mlflow-skinny
+    #   mlflow-tracing
 certifi==2026.2.25
     # via
     #   httpcore
@@ -51,6 +53,7 @@ databricks-sdk==0.102.0
     # via
     #   coda (pyproject.toml)
     #   mlflow-skinny
+    #   mlflow-tracing
 fastapi==0.135.3
     # via mlflow-skinny
 flask==3.1.3
@@ -104,23 +107,33 @@ mcp==1.26.0
     # via claude-agent-sdk
 mlflow-skinny==3.11.1
     # via coda (pyproject.toml)
+mlflow-tracing==3.11.1
+    # via coda (pyproject.toml)
 opentelemetry-api==1.40.0
     # via
     #   mlflow-skinny
+    #   mlflow-tracing
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
 opentelemetry-proto==1.40.0
-    # via mlflow-skinny
+    # via
+    #   mlflow-skinny
+    #   mlflow-tracing
 opentelemetry-sdk==1.40.0
-    # via mlflow-skinny
+    # via
+    #   mlflow-skinny
+    #   mlflow-tracing
 opentelemetry-semantic-conventions==0.61b0
     # via opentelemetry-sdk
 packaging==26.0
-    # via mlflow-skinny
+    # via
+    #   mlflow-skinny
+    #   mlflow-tracing
 protobuf==6.33.6
     # via
     #   databricks-sdk
     #   mlflow-skinny
+    #   mlflow-tracing
     #   opentelemetry-proto
 pyasn1==0.6.3
     # via pyasn1-modules
@@ -133,6 +146,7 @@ pydantic==2.12.5
     #   fastapi
     #   mcp
     #   mlflow-skinny
+    #   mlflow-tracing
     #   pydantic-settings
 pydantic-core==2.41.5
     # via pydantic

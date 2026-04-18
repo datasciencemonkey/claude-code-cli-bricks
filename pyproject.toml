@@ -10,6 +10,7 @@ dependencies = [
     "claude-agent-sdk",
     "databricks-sdk>=0.20.0",
     "mlflow-skinny==3.11.1",
+    "mlflow-tracing==3.11.1",
     "requests",
     "cryptography>=46.0.6",
 ]
