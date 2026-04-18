@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from enum import Enum
 from typing import Any
@@ -15,6 +16,28 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 app = FastAPI(title="Grocery Data Quiz")
+
+
+# Team names are rendered in the shared host/player UI. Restrict to a safe
+# alphabet so a malicious attendee cannot submit markup that other players'
+# browsers execute when the leaderboard re-renders.
+TEAM_NAME_RE = re.compile(r"^[A-Za-z0-9 _-]{1,30}$")
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Defense-in-depth: even if a future change reintroduces an innerHTML
+    # interpolation without escaping, inline script execution is blocked.
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "connect-src 'self'",
+    )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 TIMER_SECONDS = int(os.getenv("QUIZ_TIMER_SECONDS", "30"))
 
@@ -277,6 +300,12 @@ def join_team(req: JoinRequest) -> dict[str, Any]:
     name = req.name.strip()[:30]
     if not name:
         raise HTTPException(400, "Team name required")
+    if not TEAM_NAME_RE.match(name):
+        raise HTTPException(
+            400,
+            "Team name must be 1-30 characters of letters, digits, spaces, "
+            "hyphens, or underscores.",
+        )
     if name not in quiz.teams:
         quiz.teams[name] = Team(name=name)
         quiz.bump()

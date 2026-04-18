@@ -281,6 +281,12 @@
     let pollInterval = null;
 
     const $ = id => document.getElementById(id);
+    // Escape user-controlled strings before interpolating into innerHTML.
+    // Team names are server-validated against a safe alphabet, but this is
+    // the client-side belt to the server-side braces.
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}[c]
+    ));
 
     /* ============================================================
        ROUTING
@@ -465,7 +471,7 @@
           <h1>The Great <span style="color:var(--lava);">Grocery Data</span> Quiz</h1>
           <p style="color:rgba(255,255,255,0.5);font-size:1.1rem;">${s.teamCount} team${s.teamCount !== 1 ? 's' : ''} joined — waiting to start</p>
           <div class="team-grid" id="lobby-teams">
-            ${s.leaderboard?.map(t => `<div class="team-chip">${t.name}</div>`).join('') || ''}
+            ${s.leaderboard?.map(t => `<div class="team-chip">${esc(t.name)}</div>`).join('') || ''}
           </div>
         </div>`;
         controls.innerHTML = `<button class="ctrl-btn primary" onclick="hostControl('start')" ${s.teamCount === 0 ? 'disabled' : ''}>Start Quiz &#x25B6;</button>
@@ -495,7 +501,7 @@
           <div class="h-sidebar">
             <div class="lb-title">Leaderboard</div>
             <div class="lb-list">
-              ${s.leaderboard?.map((t,i) => `<div class="lb-team"><span class="lb-rank">${i+1}</span><span class="lb-name">${t.name}</span><span class="lb-pts">${t.score}</span></div>`).join('') || ''}
+              ${s.leaderboard?.map((t,i) => `<div class="lb-team"><span class="lb-rank">${i+1}</span><span class="lb-name">${esc(t.name)}</span><span class="lb-pts">${t.score}</span></div>`).join('') || ''}
             </div>
             <div class="lb-answered">${answeredCount}/${s.teamCount} answered</div>
           </div>`;
@@ -517,13 +523,13 @@
           <h1>&#x1F389; Final Results</h1>
           <div class="podium">
             ${top3.map((t,i) => `<div class="podium-item">
-              <div class="podium-name">${t.name}</div>
+              <div class="podium-name">${esc(t.name)}</div>
               <div class="podium-bar" style="height:${heights[i]}px;background:${colors[i]};">${t.score}</div>
               <div class="podium-place">${places[i]}</div>
             </div>`).join('')}
           </div>
           <div class="lb-list" style="max-width:400px;width:100%;margin-top:1rem;">
-            ${s.leaderboard?.map((t,i) => `<div class="lb-team"><span class="lb-rank">${i+1}</span><span class="lb-name">${t.name}</span><span class="lb-pts">${t.score}</span></div>`).join('') || ''}
+            ${s.leaderboard?.map((t,i) => `<div class="lb-team"><span class="lb-rank">${i+1}</span><span class="lb-name">${esc(t.name)}</span><span class="lb-pts">${t.score}</span></div>`).join('') || ''}
           </div>
         </div>`;
         controls.innerHTML = `<button class="ctrl-btn primary" onclick="hostControl('start')">Play Again &#x1F504;</button>
