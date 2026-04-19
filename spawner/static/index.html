@@ -203,8 +203,12 @@
   <div class="card">
     <div class="card-header" style="justify-content:space-between;">
       Spawned Apps
-      <button id="btn-redeploy-all" onclick="redeployAll()" style="font-size:12px;padding:5px 12px;background:var(--dbx-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:500;">Redeploy All</button>
+      <div style="display:flex;gap:8px;">
+        <button id="btn-stop-all" onclick="stopAll()" style="font-size:12px;padding:5px 12px;background:var(--dbx-error);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:500;">Stop All</button>
+        <button id="btn-redeploy-all" onclick="redeployAll()" style="font-size:12px;padding:5px 12px;background:var(--dbx-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:500;">Redeploy All</button>
+      </div>
     </div>
+    <div id="stop-status" style="display:none;font-size:13px;padding:12px;margin-bottom:12px;background:var(--dbx-dark);border:1px solid var(--dbx-border);border-radius:6px;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;"></div>
     <div id="redeploy-status" style="display:none;font-size:13px;padding:12px;margin-bottom:12px;background:var(--dbx-dark);border:1px solid var(--dbx-border);border-radius:6px;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;"></div>
     <div id="apps-loading" class="empty-state">Loading...</div>
     <table id="apps-table" style="display:none;">
@@ -226,7 +230,9 @@ updateAppNamePreview();
 
 function appNameFromEmail(email) {
   const slug = email.split('@')[0].replace(/[._]/g, '-').toLowerCase();
-  return 'coding-agents-' + slug;
+  const name = 'coda-' + slug;
+  if (name.length <= 30) return name;
+  return 'coda-' + slug.substring(0, 18) + '...';
 }
 
 function updateAppNamePreview() {
@@ -496,6 +502,89 @@ function pollRedeployStatus() {
         statusDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
         btn.disabled = false;
         btn.textContent = 'Redeploy All';
+      }
+    } catch (e) { /* keep polling */ }
+  }, 3000);
+}
+
+// --- Stop all ---
+let stopPollTimer = null;
+
+async function stopAll() {
+  const btn = document.getElementById('btn-stop-all');
+  const statusDiv = document.getElementById('stop-status');
+  if (!confirm('Stop ALL active coding-agents apps?')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Stopping...';
+  statusDiv.style.display = 'block';
+  statusDiv.style.color = 'var(--dbx-error)';
+  statusDiv.style.borderColor = 'rgba(248,81,73,0.3)';
+  statusDiv.textContent = 'Triggering stop-all...';
+
+  try {
+    const resp = await fetch('/api/stop-all', { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) {
+      statusDiv.textContent = 'Error: ' + data.error;
+      btn.disabled = false;
+      btn.textContent = 'Stop All';
+      return;
+    }
+    pollStopStatus();
+  } catch (e) {
+    statusDiv.textContent = 'Request failed: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Stop All';
+  }
+}
+
+function pollStopStatus() {
+  if (stopPollTimer) clearInterval(stopPollTimer);
+  stopPollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/stop-all/status');
+      const data = await resp.json();
+      if (!data.active) return;
+
+      const statusDiv = document.getElementById('stop-status');
+      const btn = document.getElementById('btn-stop-all');
+      const done = data.apps ? data.apps.filter(a => a.status === 'stopped').length : 0;
+      const errored = data.apps ? data.apps.filter(a => a.status === 'error').length : 0;
+      const total = data.total || 0;
+
+      if (data.status === 'in_progress') {
+        btn.textContent = done + '/' + total + ' stopped';
+        let html = 'Stopping: ' + done + '/' + total + ' complete';
+        if (errored > 0) html += ', ' + errored + ' failed';
+        if (data.apps) {
+          html += '<br>';
+          data.apps.forEach(a => {
+            const icon = a.status === 'stopped' ? '<span style="color:var(--dbx-green)">✓</span>'
+              : a.status === 'error' ? '<span style="color:var(--dbx-error)">✗</span>'
+              : a.status === 'stopping' ? '<span class="spinner-sm"></span>'
+              : '<span style="color:var(--dbx-text-muted)">○</span>';
+            html += icon + ' ' + a.name;
+            if (a.status === 'error' && a.error) html += ' <span style="color:var(--dbx-text-muted);font-size:11px;">(' + a.error.substring(0, 80) + ')</span>';
+            html += '<br>';
+          });
+        }
+        statusDiv.innerHTML = html;
+      } else if (data.status === 'complete') {
+        clearInterval(stopPollTimer);
+        stopPollTimer = null;
+        statusDiv.style.color = 'var(--dbx-green)';
+        statusDiv.style.borderColor = 'rgba(63,185,80,0.3)';
+        statusDiv.innerHTML = '✓ Stopped ' + done + '/' + total + ' apps' + (errored > 0 ? ' (' + errored + ' failed)' : '');
+        btn.disabled = false;
+        btn.textContent = 'Stop All';
+        loadApps();
+      } else if (data.status === 'error') {
+        clearInterval(stopPollTimer);
+        stopPollTimer = null;
+        statusDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
+        btn.disabled = false;
+        btn.textContent = 'Stop All';
       }
     } catch (e) { /* keep polling */ }
   }, 3000);

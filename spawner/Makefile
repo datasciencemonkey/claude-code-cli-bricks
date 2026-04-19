@@ -59,7 +59,7 @@ sync-template: ## Sync coding-agents source to shared template path
 	@echo "    Uploading template app.yaml..."
 	@# Resolve team-memory-mcp app URL (if deployed)
 	$(eval TEAM_MEMORY_URL := $(shell databricks apps get team-memory-mcp --profile $(PROFILE) --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))" 2>/dev/null))
-	@printf 'command:\n  - gunicorn\n  - app:app\nenv:\n  - name: HOME\n    value: /app/python/source_code\n  - name: ANTHROPIC_MODEL\n    value: databricks-claude-opus-4-6\n  - name: GEMINI_MODEL\n    value: databricks-gemini-3-1-pro\n  - name: CODEX_MODEL\n    value: databricks-gpt-5-2\n  - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n    value: 0\n' > /tmp/_coda_template_app.yaml
+	@printf 'command:\n  - gunicorn\n  - app:app\nenv:\n  - name: HOME\n    value: /app/python/source_code\n  - name: ANTHROPIC_MODEL\n    value: databricks-claude-opus-4-7\n  - name: GEMINI_MODEL\n    value: databricks-gemini-3-1-pro\n  - name: CODEX_MODEL\n    value: databricks-gpt-5-2\n  - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n    value: 0\n' > /tmp/_coda_template_app.yaml
 	@if [ -n "$(TEAM_MEMORY_URL)" ]; then \
 		printf '  - name: TEAM_MEMORY_MCP_URL\n    value: %s\n' "$(TEAM_MEMORY_URL)" >> /tmp/_coda_template_app.yaml; \
 		echo "    Team memory MCP URL: $(TEAM_MEMORY_URL)"; \

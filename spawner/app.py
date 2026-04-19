@@ -77,13 +77,7 @@ def get_admin_token() -> str:
 _provision_jobs: dict[str, dict] = {}
 _provision_lock = threading.Lock()
 
-# Limit concurrent provisioning to avoid overwhelming the Apps API.
-# All threads start immediately but only N can proceed past the semaphore;
-# the rest queue up and are released as earlier provisions complete each API call.
-_PROVISION_CONCURRENCY = 3
-_provision_semaphore = threading.Semaphore(_PROVISION_CONCURRENCY)
-
-MAX_APP_NAME_LENGTH = 63
+MAX_APP_NAME_LENGTH = 30
 
 # UC Volume for offline Python wheel installation
 WHEELS_VOLUME_CATALOG = os.environ.get("WHEELS_VOLUME_CATALOG", "main")
@@ -92,13 +86,13 @@ WHEELS_VOLUME_NAME = os.environ.get("WHEELS_VOLUME_NAME", "coda-wheels")
 
 
 def app_name_from_email(email: str) -> str:
-    """Derive app name from user email: david.okeeffe@company.com -> coding-agents-david-okeeffe.
+    """Derive app name from user email: david.okeeffe@company.com -> coda-david-okeeffe.
 
-    Databricks app names are limited to 63 characters. If the derived name exceeds
-    this limit, the slug is truncated and a short hash suffix is appended to
-    preserve uniqueness.
+    Databricks app names are limited to 30 characters. Uses 'coda-' prefix
+    to maximise space for the username slug (25 chars available).
+    If still too long, truncates with a hash suffix for uniqueness.
     """
-    prefix = "coding-agents-"
+    prefix = "coda-"
     username = email.split("@")[0]
     slug = username.replace(".", "-").replace("_", "-").lower()
     full_name = f"{prefix}{slug}"
@@ -131,49 +125,73 @@ def _ensure_owner_description(
         print(f"  Warning: could not update description ({resp.status_code}): {resp.text[:200]}")
 
 
-def create_app(
-    host: str,
-    admin_token: str,
-    app_name: str,
-    owner_email: str,
-    max_retries: int = 5,
-    base_delay: float = 2.0,
-) -> dict:
+def grant_user_app_permissions(
+    host: str, admin_token: str, app_name: str, owner_email: str
+) -> None:
+    """Grant CAN_MANAGE on the app to the owner so they appear as the app owner."""
+    resp = requests.patch(
+        f"{host}/api/2.0/permissions/apps/{app_name}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "access_control_list": [
+                {"user_name": owner_email, "permission_level": "CAN_MANAGE"}
+            ]
+        },
+    )
+    if resp.ok:
+        print(f"  Granted CAN_MANAGE on {app_name} to {owner_email}")
+    else:
+        print(
+            f"  Warning: could not grant permissions ({resp.status_code}): "
+            f"{resp.text[:200]}"
+        )
+
+
+def _request_with_backoff(
+    method: str,
+    url: str,
+    max_retries: int = 6,
+    base_delay: float = 5.0,
+    **kwargs,
+) -> requests.Response:
+    """Make an HTTP request with exponential backoff on 429 responses."""
+    for attempt in range(max_retries):
+        resp = requests.request(method, url, **kwargs)
+        if resp.status_code != 429:
+            return resp
+        delay = min(base_delay * (2 ** attempt), 60)
+        print(f"  Rate limited ({url.split('/')[-1]}), retrying in {delay:.0f}s "
+              f"(attempt {attempt + 1}/{max_retries})")
+        time.sleep(delay)
+    return resp
+
+
+# Limit concurrent API-heavy provisioning threads to avoid 429s
+_provision_semaphore = threading.Semaphore(3)
+
+
+def create_app(host: str, admin_token: str, app_name: str, owner_email: str) -> dict:
     """Create the Databricks App via POST /api/2.0/apps.
 
     The app is created with the admin SP token. Owner identity is stored in the
     description field as 'owner:{email}' so CODA's get_token_owner() can resolve
     it without requiring the user's PAT.
-
-    Retries with exponential backoff on 429/400 responses that are common when
-    creating many apps in rapid succession (bulk provisioning).
     """
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    payload = {"name": app_name, "description": f"owner:{owner_email}"}
-
-    for attempt in range(max_retries):
-        resp = requests.post(f"{host}/api/2.0/apps", headers=headers, json=payload)
-
-        # 409 means app already exists -- ensure description has owner:{email}
-        if resp.status_code == 409:
-            _ensure_owner_description(host, admin_token, app_name, owner_email)
-            return check_existing_app(host, admin_token, app_name)
-
-        if resp.ok:
-            return resp.json()
-
-        if resp.status_code in (429, 400):
-            delay = min(base_delay * (2**attempt), 60)
-            print(f"  Create {app_name}: {resp.status_code}, retrying in {delay:.0f}s "
-                  f"(attempt {attempt + 1}/{max_retries})")
-            time.sleep(delay)
-            continue
-
-        # Non-retryable error — raise immediately
-        resp.raise_for_status()
-
+    resp = _request_with_backoff(
+        "POST",
+        f"{host}/api/2.0/apps",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "name": app_name,
+            "description": f"owner:{owner_email}",
+        },
+    )
+    # 409 means app already exists -- ensure description has owner:{email}
+    if resp.status_code == 409:
+        _ensure_owner_description(host, admin_token, app_name, owner_email)
+        return check_existing_app(host, admin_token, app_name)
     resp.raise_for_status()
-    return resp.json()  # unreachable but keeps linters happy
+    return resp.json()
 
 
 def wait_for_compute_active(
@@ -204,34 +222,16 @@ def deploy_app(
     oauth_token: str,
     app_name: str,
     source_code_path: str,
-    max_retries: int = 5,
-    base_delay: float = 2.0,
 ) -> dict:
-    """Deploy the app via POST /api/2.0/apps/{name}/deployments.
-
-    Retries with exponential backoff on 429 (rate limit) and 400 (transient
-    API errors common during bulk provisioning).
-    """
-    headers = {"Authorization": f"Bearer {oauth_token}"}
-    last_resp = None
-    for attempt in range(max_retries):
-        resp = requests.post(
-            f"{host}/api/2.0/apps/{app_name}/deployments",
-            headers=headers,
-            json={"source_code_path": source_code_path},
-        )
-        if resp.ok:
-            return resp.json()
-        last_resp = resp
-        if resp.status_code in (429, 400):
-            delay = min(base_delay * (2**attempt), 60)
-            print(f"  Deploy {app_name}: {resp.status_code}, retrying in {delay:.0f}s "
-                  f"(attempt {attempt + 1}/{max_retries})")
-            time.sleep(delay)
-            continue
-        # Non-retryable error
-        break
-    raise RuntimeError(f"{last_resp.status_code} from deploy API: {last_resp.text}")
+    """Deploy the app via POST /api/2.0/apps/{name}/deployments."""
+    resp = requests.post(
+        f"{host}/api/2.0/apps/{app_name}/deployments",
+        headers={"Authorization": f"Bearer {oauth_token}"},
+        json={"source_code_path": source_code_path},
+    )
+    if not resp.ok:
+        raise RuntimeError(f"{resp.status_code} from deploy API: {resp.text}")
+    return resp.json()
 
 
 def _grant_with_retry(
@@ -319,7 +319,9 @@ def list_spawned_apps(host: str, oauth_token: str) -> list:
     seen_names = set()
     for a in all_apps:
         name = a["name"]
-        if not name.startswith("coding-agents-") or name == "coding-agents-spawner":
+        if name == "coding-agents-spawner":
+            continue
+        if not (name.startswith("coding-agents-") or name.startswith("coda-")):
             continue
         seen_names.add(name)
         job = _provision_jobs.get(name)
@@ -388,6 +390,18 @@ def check_existing_app(host: str, oauth_token: str, app_name: str) -> dict:
     return {"deployed": False}
 
 
+def find_existing_app_for_email(host: str, oauth_token: str, email: str) -> dict:
+    """Check if user already has an app under any known prefix (coda- or coding-agents-)."""
+    username = email.split("@")[0]
+    slug = username.replace(".", "-").replace("_", "-").lower()
+    for prefix in ("coda-", "coding-agents-"):
+        candidate = f"{prefix}{slug}"
+        result = check_existing_app(host, oauth_token, candidate)
+        if result.get("deployed"):
+            return result
+    return {"deployed": False}
+
+
 def _update_job(app_name: str, **kwargs):
     """Thread-safe update of a provision job's state."""
     with _provision_lock:
@@ -408,50 +422,52 @@ def provision_app_async(host: str, admin_token: str, email: str, app_name: str):
 
     Zero-PAT flow: uses the admin SP token for all operations. The user's email
     (from SSO) is stored in the app description for owner resolution.
-
-    Uses _provision_semaphore to limit concurrency — when called from bulk
-    provisioning, threads wait their turn instead of all hitting the API at once.
+    Uses a semaphore to limit concurrent API calls and avoid 429s.
     """
     source_code_path = "/Workspace/Shared/apps/coding-agents"
 
-    with _provision_semaphore:
-        try:
-            # Step 1: Create app (with owner in description)
-            _add_step(app_name, 1, "creating_app", f"Creating app '{app_name}'...")
-            app_result = create_app(host, admin_token, app_name, email)
-            sp_client_id = app_result.get("service_principal_client_id", "")
+    _add_step(app_name, 0, "queued", "Waiting for slot...")
+    _provision_semaphore.acquire()
+    try:
+        # Step 1: Create app (with owner in description)
+        _add_step(app_name, 1, "creating_app", f"Creating app '{app_name}'...")
+        app_result = create_app(host, admin_token, app_name, email)
+        sp_client_id = app_result.get("service_principal_client_id", "")
 
-            # Step 2: Grant SP access to UC Volume (for offline wheel install)
-            if sp_client_id:
-                _add_step(
-                    app_name, 2, "granting_access", "Granting service principal access..."
-                )
-                grant_sp_volume_access(host, admin_token, app_result)
+        # Step 2: Grant user CAN_MANAGE + SP access to UC Volume
+        _add_step(
+            app_name, 2, "granting_access", "Granting permissions..."
+        )
+        grant_user_app_permissions(host, admin_token, app_name, email)
+        if sp_client_id:
+            grant_sp_volume_access(host, admin_token, app_result)
 
-            # Step 3: Wait for compute
-            _add_step(
-                app_name,
-                3,
-                "waiting_for_compute",
-                "Waiting for compute to be ready (60-90s)...",
-            )
-            wait_for_compute_active(host, admin_token, app_name)
+        # Step 3: Wait for compute
+        _add_step(
+            app_name,
+            3,
+            "waiting_for_compute",
+            "Waiting for compute to be ready (60-90s)...",
+        )
+        wait_for_compute_active(host, admin_token, app_name)
 
-            # Step 4: Deploy
-            _add_step(app_name, 4, "deploying", "Deploying app...")
-            deploy_app(host, admin_token, app_name, source_code_path)
+        # Step 4: Deploy
+        _add_step(app_name, 4, "deploying", "Deploying app...")
+        deploy_app(host, admin_token, app_name, source_code_path)
 
-            # Step 5: Wait for app to be running
-            _add_step(app_name, 5, "starting", "Waiting for app to start...")
-            _wait_for_app_running(host, admin_token, app_name)
+        # Step 5: Wait for app to be running
+        _add_step(app_name, 5, "starting", "Waiting for app to start...")
+        _wait_for_app_running(host, admin_token, app_name)
 
-            app_url = app_result.get("url", app_result.get("app_url", ""))
-            _add_step(app_name, 6, "complete", "App is running!")
-            _update_job(app_name, status="complete", app_url=app_url)
+        app_url = app_result.get("url", app_result.get("app_url", ""))
+        _add_step(app_name, 6, "complete", "App is running!")
+        _update_job(app_name, status="complete", app_url=app_url)
 
-        except Exception as exc:
-            _add_step(app_name, -1, "error", str(exc))
-            _update_job(app_name, status="error", error=str(exc))
+    except Exception as exc:
+        _add_step(app_name, -1, "error", str(exc))
+        _update_job(app_name, status="error", error=str(exc))
+    finally:
+        _provision_semaphore.release()
 
 
 def _wait_for_app_running(
@@ -544,13 +560,13 @@ def api_provision():
 
     app_name = app_name_from_email(email)
 
-    # Check if already running
-    existing = check_existing_app(host, admin_token, app_name)
+    # Check if already running under any prefix (coda- or coding-agents-)
+    existing = find_existing_app_for_email(host, admin_token, email)
     if existing.get("deployed") and existing.get("state") == "RUNNING":
         return jsonify(
             {
                 "success": True,
-                "app_name": app_name,
+                "app_name": existing.get("app_name", app_name),
                 "app_url": existing.get("app_url", ""),
                 "already_running": True,
             }
@@ -590,16 +606,11 @@ def api_provision():
 
 @app.route("/api/provision-bulk", methods=["POST"])
 def api_provision_bulk():
-    """Provision apps for multiple users with throttled concurrency.
+    """Provision apps for multiple users in parallel.
 
     Accepts {"emails": ["a@example.com", "b@example.com", ...]}.
-    Registers all jobs immediately and returns the list to poll.
-    Threads are spawned per user but gated by _provision_semaphore
-    (max 3 concurrent), with exponential backoff on API errors.
-
-    Unlike the single-user endpoint, we skip the per-email check_existing_app
-    call to avoid 54+ sequential API calls blocking the HTTP response.
-    Each provisioning thread handles existing apps via create_app (409 → re-use).
+    Kicks off a background thread per user (reuses the single-user flow)
+    and returns the list of app names to poll via /api/provision-status/<name>.
     """
     try:
         admin_token = get_admin_token()
@@ -620,7 +631,12 @@ def api_provision_bulk():
             continue
         app_name = app_name_from_email(email)
 
-        # Skip if already being provisioned in this session
+        # Skip if already running under any prefix, or already provisioning
+        existing = find_existing_app_for_email(host, admin_token, email)
+        if existing.get("deployed") and existing.get("state") == "RUNNING":
+            results.append({"email": email, "app_name": existing.get("app_name", app_name), "status": "already_running"})
+            continue
+
         with _provision_lock:
             existing_job = _provision_jobs.get(app_name)
             if existing_job and existing_job["status"] == "in_progress":
@@ -628,7 +644,7 @@ def api_provision_bulk():
                 continue
 
             _provision_jobs[app_name] = {
-                "steps": [{"step": 0, "status": "queued", "message": "Queued for provisioning..."}],
+                "steps": [{"step": 0, "status": "starting", "message": f"Provisioning for {email}..."}],
                 "status": "in_progress",
                 "app_url": "",
                 "app_name": app_name,
@@ -669,20 +685,20 @@ def _deploy_with_backoff(
     max_retries: int = 5,
     base_delay: float = 2.0,
 ) -> requests.Response:
-    """Deploy a single app with exponential backoff on 429/400 responses."""
+    """Deploy a single app with exponential backoff on 429 (rate limit) responses."""
     for attempt in range(max_retries):
         resp = requests.post(
             f"{host}/api/2.0/apps/{app_name}/deployments",
             headers=headers,
             json={"source_code_path": source_code_path},
         )
-        if resp.status_code not in (429, 400):
+        if resp.status_code != 429:
             return resp
         delay = min(base_delay * (2**attempt), 60)
-        print(f"  {resp.status_code} deploying {app_name}, retrying in {delay:.0f}s "
+        print(f"  Rate limited deploying {app_name}, retrying in {delay:.0f}s "
               f"(attempt {attempt + 1}/{max_retries})")
         time.sleep(delay)
-    return resp  # Return last error response if all retries exhausted
+    return resp  # Return last 429 response if all retries exhausted
 
 
 # Max concurrent deploy requests to avoid hitting API rate limits
@@ -792,6 +808,115 @@ def api_redeploy_all_status():
         if not _redeploy_job:
             return jsonify({"active": False})
         return jsonify({"active": True, **_redeploy_job})
+
+
+# In-memory stop-all job tracker
+_stop_job: dict | None = None
+_stop_lock = threading.Lock()
+
+_STOP_BATCH_SIZE = 3
+_STOP_BATCH_DELAY = 2.0
+
+
+def stop_all_apps(host: str, admin_token: str):
+    """Stop all coding-agents / coda- apps (excluding the spawner itself)."""
+    global _stop_job
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    try:
+        resp = requests.get(f"{host}/api/2.0/apps", headers=headers)
+        resp.raise_for_status()
+        all_apps = resp.json().get("apps", [])
+        targets = [
+            a
+            for a in all_apps
+            if (a["name"].startswith("coding-agents-") or a["name"].startswith("coda-"))
+            and a["name"] != "coding-agents-spawner"
+            and a["name"] != "coding-agent-spawner"
+            and a.get("compute_status", {}).get("state") == "ACTIVE"
+        ]
+
+        with _stop_lock:
+            _stop_job["total"] = len(targets)
+            _stop_job["apps"] = [
+                {"name": a["name"], "status": "pending"} for a in targets
+            ]
+
+        for i, a in enumerate(targets):
+            name = a["name"]
+            with _stop_lock:
+                _stop_job["apps"][i]["status"] = "stopping"
+                _stop_job["completed"] = i
+
+            try:
+                stop_resp = requests.post(
+                    f"{host}/api/2.0/apps/{name}/stop",
+                    headers=headers,
+                )
+                if stop_resp.ok:
+                    with _stop_lock:
+                        _stop_job["apps"][i]["status"] = "stopped"
+                else:
+                    with _stop_lock:
+                        _stop_job["apps"][i]["status"] = "error"
+                        _stop_job["apps"][i]["error"] = stop_resp.text[:200]
+            except Exception as exc:
+                with _stop_lock:
+                    _stop_job["apps"][i]["status"] = "error"
+                    _stop_job["apps"][i]["error"] = str(exc)[:200]
+
+            if (i + 1) % _STOP_BATCH_SIZE == 0 and i + 1 < len(targets):
+                time.sleep(_STOP_BATCH_DELAY)
+
+        with _stop_lock:
+            _stop_job["completed"] = len(targets)
+            _stop_job["status"] = "complete"
+
+    except Exception as exc:
+        with _stop_lock:
+            _stop_job["status"] = "error"
+            _stop_job["error"] = str(exc)
+
+
+@app.route("/api/stop-all", methods=["POST"])
+def api_stop_all():
+    """Stop all spawned coding-agents / coda- apps."""
+    global _stop_job
+
+    try:
+        admin_token = get_admin_token()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+    with _stop_lock:
+        if _stop_job and _stop_job.get("status") == "in_progress":
+            return jsonify({"error": "Stop-all already in progress"}), 409
+
+        _stop_job = {
+            "status": "in_progress",
+            "total": 0,
+            "completed": 0,
+            "apps": [],
+            "error": None,
+            "started_at": time.time(),
+        }
+
+    thread = threading.Thread(
+        target=stop_all_apps,
+        args=(DATABRICKS_HOST, admin_token),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/stop-all/status")
+def api_stop_all_status():
+    """Poll endpoint for stop-all progress."""
+    with _stop_lock:
+        if not _stop_job:
+            return jsonify({"active": False})
+        return jsonify({"active": True, **_stop_job})
 
 
 if __name__ == "__main__":
