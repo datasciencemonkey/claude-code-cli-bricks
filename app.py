@@ -103,6 +103,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "editors",    "label": "Detecting available editors",  "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "dbcli",     "label": "Upgrading Databricks CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -451,6 +452,17 @@ def run_setup():
 
     _run_step("micro", ["bash", "-c",
         "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
+
+    # Probe which terminal editors are actually available in this container.
+    # Writes a human-readable report to ~/.local/share/coda/editors.txt so
+    # users (and Claude) can discover what to reach for from the terminal.
+    _run_step("editors", ["bash", "-c",
+        "mkdir -p ~/.local/share/coda && "
+        "{ echo 'Available terminal editors (detected at app startup):'; "
+        "  for ed in micro nano vim vi emacs ed pico joe mcedit; do "
+        "    p=$(command -v \"$ed\" 2>/dev/null) && echo \"  $ed -> $p\"; "
+        "  done; } > ~/.local/share/coda/editors.txt && "
+        "cat ~/.local/share/coda/editors.txt"])
 
     _run_step("gh", ["bash", "install_gh.sh"])
 

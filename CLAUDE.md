@@ -93,3 +93,5 @@ Real-time terminal I/O over **WebSocket** (Flask-SocketIO) with automatic **HTTP
 
 # things to remember
 Remember to never move .git folder to the workspace if you're running workspace import.
+
+Fork-specific runtime directives (uv, library version floors, Unity Catalog name, terminal-editor pointer) are injected into `~/.claude/CLAUDE.md` by `setup_claude.py` at app startup. See the `coda-fork-directives` block there — that's the source of truth for per-fork conventions, and it travels with every CODA spawned from this repo.

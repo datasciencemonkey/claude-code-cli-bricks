@@ -283,6 +283,46 @@ if token:
             with open(_claude_md, "a") as _f:
                 _f.write(_egress_note)
             print(f"Appended egress fallback note to {_claude_md}")
+
+    # 1c. Fork-specific directives. These are conventions that apply to every
+    # CODA spawned from this repo — package manager, required library floors,
+    # the working Unity Catalog, and the terminal-editor pointer. Mirrors the
+    # egress-fallback pattern above: idempotent via a marker comment, appended
+    # to ~/.claude/CLAUDE.md so Claude sees them in every session regardless
+    # of cwd. Update this block when fork-wide conventions change.
+    _fork_marker = "<!-- coda-fork-directives -->"
+    _fork_note = (
+        f"\n{_fork_marker}\n"
+        "## CODA fork directives (always active)\n\n"
+        "### Python packaging\n"
+        "Always use `uv` for Python work. Never `pip install` directly — "
+        "`uv add` for new deps, `uv sync` to install, `uv run` to execute.\n\n"
+        "### Required library version floors\n"
+        "When scaffolding or updating a `pyproject.toml`, pin at least:\n"
+        "- `mlflow >= 3.11`\n"
+        "- `databricks-sdk >= 0.100.0`\n"
+        "Bump older pins rather than matching them. Do not downgrade.\n\n"
+        "### Unity Catalog\n"
+        "The working catalog in this environment is `edp_aisandbox_aisandbox_dev`. "
+        "Place new schemas, tables, volumes, and pipelines under this catalog "
+        "unless the user explicitly names another. "
+        "Example: `edp_aisandbox_aisandbox_dev.my_schema.my_table`.\n\n"
+        "### Terminal editors\n"
+        "`micro` is pre-installed at `~/.local/bin/micro` (Ctrl-S save, Ctrl-Q quit, "
+        "mouse support, no modal editing — safe default to recommend). "
+        "For other editors, check `~/.local/share/coda/editors.txt` — generated "
+        "at app startup, lists every editor detected via `command -v`. "
+        "If a user asks for vim/emacs and the file shows they're missing, say so "
+        "rather than guessing.\n"
+    )
+    _claude_md = claude_dir / "CLAUDE.md"
+    _existing = _claude_md.read_text() if _claude_md.exists() else ""
+    if _fork_marker not in _existing:
+        with open(_claude_md, "a") as _f:
+            _f.write(_fork_note)
+        print(f"Appended fork directives to {_claude_md}")
+    else:
+        print(f"Fork directives already present in {_claude_md}")
 else:
     print("No DATABRICKS_TOKEN — skipping settings.json (will be configured after PAT setup)")
 
