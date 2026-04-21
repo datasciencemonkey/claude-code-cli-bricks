@@ -1,0 +1,50 @@
+{
+  "name": "coda",
+  "owner": {
+    "name": "Databricks Field Engineering",
+    "email": "field-eng@databricks.com"
+  },
+  "metadata": {
+    "description": "CODA-bundled Claude Code plugins — ship with every CODA deployment",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "coda-essentials",
+      "source": "./plugins/coda-essentials",
+      "description": "Subagents, hooks, slash commands, and session lifecycle tooling bundled with every CODA instance. Includes the TDD subagent workflow (prd-writer, test-generator, implementer, build-feature), session-start git context loader, memory staleness checker, crystallization nudge, and the /til slash command.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Databricks Field Engineering"
+      },
+      "category": "productivity",
+      "keywords": [
+        "coda",
+        "databricks",
+        "workshop",
+        "tdd",
+        "memory",
+        "hooks"
+      ]
+    },
+    {
+      "name": "coda-databricks-skills",
+      "source": "./plugins/coda-databricks-skills",
+      "description": "Databricks platform skills synced from databricks-solutions/ai-dev-kit: Agent Bricks, AI/BI Dashboards, AI Functions, Databricks App (Python), BDD Testing, Bundles, Config, DBSQL, Docs, Execution Compute, Genie, Iceberg, Jobs, Lakebase (Autoscale + Provisioned), Metric Views, MLflow Evaluation, Model Serving, Python SDK, Spark SDP, Structured Streaming, Synthetic Data Gen, Unity Catalog, Unstructured PDF Generation, Vector Search, Zerobus Ingest, and Spark Python Data Source.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Databricks Field Engineering",
+        "url": "https://github.com/databricks-solutions/ai-dev-kit"
+      },
+      "category": "platform",
+      "keywords": [
+        "databricks",
+        "ai-dev-kit",
+        "spark",
+        "unity-catalog",
+        "mlflow",
+        "lakebase"
+      ]
+    }
+  ]
+}

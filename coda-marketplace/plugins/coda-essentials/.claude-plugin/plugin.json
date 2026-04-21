@@ -1,0 +1,18 @@
+{
+  "name": "coda-essentials",
+  "description": "Subagents, hooks, slash commands, and session lifecycle tooling bundled with every CODA instance.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Databricks Field Engineering"
+  },
+  "keywords": [
+    "coda",
+    "databricks",
+    "workshop",
+    "tdd",
+    "memory",
+    "hooks"
+  ],
+  "agents": "./agents/",
+  "commands": "./commands/"
+}
