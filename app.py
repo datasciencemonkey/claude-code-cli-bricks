@@ -21,7 +21,7 @@ import tomllib
 import requests
 
 import app_state
-from utils import ensure_https
+from utils import ensure_https, get_gateway_host
 from pat_rotator import PATRotator
 
 # Sanitize DATABRICKS_TOKEN early — the platform sometimes injects trailing
@@ -43,6 +43,7 @@ except Exception:
 SESSION_TIMEOUT_SECONDS = 86400      # No poll for 24 hours = dead session
 CLEANUP_INTERVAL_SECONDS = 900       # Check for stale sessions every 15 min
 GRACEFUL_SHUTDOWN_WAIT = 3          # Seconds to wait after SIGHUP before SIGKILL
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "5"))
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +103,7 @@ setup_state = {
     "steps": [
         {"id": "git",        "label": "Configuring git identity",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "micro",      "label": "Installing micro editor",      "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "editors",    "label": "Detecting available editors",  "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "gh",         "label": "Installing GitHub CLI",        "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "dbcli",     "label": "Upgrading Databricks CLI",     "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "proxy",   "label": "Starting content-filter proxy", "status": "pending", "started_at": None, "completed_at": None, "error": None},
@@ -111,6 +113,7 @@ setup_state = {
         {"id": "gemini",     "label": "Configuring Gemini CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "databricks", "label": "Setting up Databricks CLI",    "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "mlflow",     "label": "Enabling MLflow tracing",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "projects",   "label": "Setting up workshop projects",  "status": "pending", "started_at": None, "completed_at": None, "error": None},
     ]
 }
 
@@ -196,6 +199,18 @@ def _setup_git_config():
         f.write("\n".join(lines) + "\n")
     logger.info(f"Git config written to {gitconfig_path}")
 
+    # Configure gh as the git credential helper (if gh is available).
+    # NOTE: gh must already be authenticated (via `gh auth login` or GH_TOKEN env var)
+    # for the credential helper to work. Without auth, git operations to GitHub will fail.
+    try:
+        subprocess.run(
+            ["gh", "auth", "setup-git"],
+            capture_output=True, timeout=10,
+        )
+        logger.info("gh auth setup-git configured")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        logger.debug("gh not available, skipping credential helper setup")
+
     # Write post-commit hook for workspace sync (works from any CLI: Claude, Gemini, OpenCode, etc.)
     # Only syncs repos inside ~/projects/ — skips the app source and any other repos
     post_commit = os.path.join(hooks_dir, "post-commit")
@@ -236,8 +251,81 @@ def _setup_git_config():
     os.chmod(post_commit, 0o755)
     logger.info(f"Post-commit hook written to {post_commit}")
 
+    # Write `wsync` command to ~/.local/bin for manual workspace sync
+    local_bin = os.path.join(home, ".local", "bin")
+    os.makedirs(local_bin, exist_ok=True)
+    wsync_path = os.path.join(local_bin, "wsync")
+    with open(wsync_path, "w") as f:
+        f.write('#!/bin/bash\n')
+        f.write('# Manual sync to Databricks Workspace\n')
+        f.write('REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n')
+        f.write('if [ -z "$REPO_ROOT" ]; then\n')
+        f.write('    echo "Error: not inside a git repo"\n')
+        f.write('    exit 1\n')
+        f.write('fi\n')
+        f.write('APP_DIR="/app/python/source_code"\n')
+        f.write('SYNC_SCRIPT="$APP_DIR/sync_to_workspace.py"\n')
+        f.write('if [ ! -f "$SYNC_SCRIPT" ]; then\n')
+        f.write('    echo "Error: sync script not found"\n')
+        f.write('    exit 1\n')
+        f.write('fi\n')
+        f.write('echo "Syncing $REPO_ROOT to Databricks Workspace..."\n')
+        f.write('uv run --project "$APP_DIR" python "$SYNC_SCRIPT" "$REPO_ROOT"\n')
+    os.chmod(wsync_path, 0o755)
+    logger.info(f"wsync command written to {wsync_path}")
+
     # Reinit app source git to remove template origin (Databricks Apps only)
     _reinit_app_git()
+
+
+def _setup_embedded_projects():
+    """Copy embedded project templates from app source into ~/projects/ and git-init them.
+
+    Projects are bundled under <app_source>/projects/<name>/ at deploy time.
+    Each is copied to ~/projects/<name>/ (if not already present) and initialized
+    as a standalone git repo so commits trigger workspace sync via post-commit hook.
+    """
+    import shutil
+
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    embedded_dir = os.path.join(app_dir, "projects")
+    if not os.path.isdir(embedded_dir):
+        return
+
+    home = os.environ.get("HOME", "/app/python/source_code")
+    if not home or home == "/":
+        home = "/app/python/source_code"
+    projects_dir = os.path.join(home, "projects")
+    os.makedirs(projects_dir, exist_ok=True)
+
+    for name in os.listdir(embedded_dir):
+        src = os.path.join(embedded_dir, name)
+        if not os.path.isdir(src):
+            continue
+        dest = os.path.join(projects_dir, name)
+        if os.path.exists(dest):
+            logger.info(f"Project already exists, skipping: {dest}")
+            continue
+
+        shutil.copytree(src, dest)
+        # Initialize as a git repo so post-commit hooks work
+        subprocess.run(["git", "init"], cwd=dest, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=dest, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Initial workshop project"],
+            cwd=dest, capture_output=True,
+        )
+        logger.info(f"Embedded project initialized: {dest}")
+
+
+def _run_projects_step():
+    """Run embedded project setup as a tracked setup step."""
+    _update_step("projects", status="running", started_at=time.time())
+    try:
+        _setup_embedded_projects()
+        _update_step("projects", status="complete", completed_at=time.time())
+    except Exception as e:
+        _update_step("projects", status="error", completed_at=time.time(), error=str(e))
 
 
 def _reinit_app_git():
@@ -270,6 +358,9 @@ def _configure_all_cli_auth(token):
     """
     import json
 
+    from utils import resolve_and_cache_gateway
+    resolve_and_cache_gateway()
+
     home = os.environ.get("HOME", "/app/python/source_code")
     if not home or home == "/":
         home = "/app/python/source_code"
@@ -278,7 +369,7 @@ def _configure_all_cli_auth(token):
     claude_dir = os.path.join(home, ".claude")
     os.makedirs(claude_dir, exist_ok=True)
 
-    gateway_host = ensure_https(os.environ.get("DATABRICKS_GATEWAY_HOST", "").rstrip("/"))
+    gateway_host = get_gateway_host()
     databricks_host = ensure_https(os.environ.get("DATABRICKS_HOST", "").rstrip("/"))
 
     if gateway_host:
@@ -287,11 +378,29 @@ def _configure_all_cli_auth(token):
         anthropic_base_url = f"{databricks_host}/serving-endpoints/anthropic"
 
     settings = {
+        "theme": "dark",
+        "permissions": {
+            "defaultMode": "auto",
+            "allow": [
+                "Bash(databricks *)",
+                "Bash(uv *)",
+                "Bash(git *)",
+                "Bash(make *)",
+                "Bash(python *)",
+                "Bash(pytest *)",
+                "Bash(ruff *)",
+                "Bash(wsync)",
+            ],
+        },
         "env": {
-            "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-sonnet-4-6"),
+            "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL", "databricks-claude-opus-4-7"),
             "ANTHROPIC_BASE_URL": anthropic_base_url,
             "ANTHROPIC_AUTH_TOKEN": token,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "databricks-claude-opus-4-7",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "databricks-claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "databricks-claude-haiku-4-5",
             "ANTHROPIC_CUSTOM_HEADERS": "x-databricks-use-coding-agent-mode: true",
+            "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         }
     }
 
@@ -328,6 +437,10 @@ def run_setup():
         setup_state["status"] = "running"
         setup_state["started_at"] = time.time()
 
+    # Probe AI Gateway once; result is cached in _GATEWAY_RESOLVED for subprocesses
+    from utils import resolve_and_cache_gateway
+    resolve_and_cache_gateway()
+
     # --- Sequential prerequisites (git identity + editor) ---
     # Git config — done directly in Python, not as a subprocess
     _update_step("git", status="running", started_at=time.time())
@@ -339,6 +452,17 @@ def run_setup():
 
     _run_step("micro", ["bash", "-c",
         "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
+
+    # Probe which terminal editors are actually available in this container.
+    # Writes a human-readable report to ~/.local/share/coda/editors.txt so
+    # users (and Claude) can discover what to reach for from the terminal.
+    _run_step("editors", ["bash", "-c",
+        "mkdir -p ~/.local/share/coda && "
+        "{ echo 'Available terminal editors (detected at app startup):'; "
+        "  for ed in micro nano vim vi emacs ed pico joe mcedit; do "
+        "    p=$(command -v \"$ed\" 2>/dev/null) && echo \"  $ed -> $p\"; "
+        "  done; } > ~/.local/share/coda/editors.txt && "
+        "cat ~/.local/share/coda/editors.txt"])
 
     _run_step("gh", ["bash", "install_gh.sh"])
 
@@ -360,11 +484,13 @@ def run_setup():
         ("mlflow",     ["uv", "run", "python", "setup_mlflow.py"]),
     ]
 
-    with ThreadPoolExecutor(max_workers=len(parallel_steps)) as executor:
+    with ThreadPoolExecutor(max_workers=len(parallel_steps) + 1) as executor:
         futures = [
             executor.submit(_run_step, step_id, command)
             for step_id, command in parallel_steps
         ]
+        # Embedded projects (copy + git init) — runs in parallel with agent setup
+        futures.append(executor.submit(_run_projects_step))
         wait(futures)
 
     with setup_lock:
@@ -374,24 +500,52 @@ def run_setup():
 
 
 def get_token_owner():
-    """Get the owner email. Priority: Apps API (app.creator) > PAT (current_user.me).
+    """Get the owner email.
 
-    Uses the auto-provisioned SP to call the Apps API — no PAT needed for
-    owner resolution. Falls back to PAT-based lookup for backward compat.
+    Priority: APP_OWNER_EMAIL env var > app description > app.creator > PAT.
+    The spawner sets owner:{email} in the app description when creating apps on
+    behalf of users, so the child app knows its owner without requiring a PAT.
+
+    The Apps API call retries with backoff because the app's auto-provisioned SP
+    credentials may not be ready for OAuth token exchange immediately at boot.
     """
     from databricks.sdk import WorkspaceClient
 
-    # 1. Try Apps API via SP credentials (no PAT needed)
+    # 0. Explicit owner from deployer (env var)
+    explicit_owner = os.environ.get("APP_OWNER_EMAIL", "").strip().lower()
+    if explicit_owner:
+        logger.info(f"Owner resolved from APP_OWNER_EMAIL: {explicit_owner}")
+        return explicit_owner
+
+    # 1. Try Apps API via SP credentials (no PAT needed) — retry for SP propagation
     app_name = os.environ.get("DATABRICKS_APP_NAME")
     if app_name:
-        try:
-            w = WorkspaceClient()  # auto-detects SP credentials
-            app = w.apps.get(name=app_name)
-            owner = app.creator
-            logger.info(f"Owner resolved from app.creator: {owner}")
-            return owner
-        except Exception as e:
-            logger.warning(f"Could not resolve owner via Apps API: {e}")
+        max_retries = 6
+        base_delay = 5.0
+        for attempt in range(max_retries):
+            try:
+                w = WorkspaceClient()  # auto-detects SP credentials
+                app_info = w.apps.get(name=app_name)
+
+                # Spawner sets owner in description as "owner:{email}"
+                desc = getattr(app_info, "description", "") or ""
+                if desc.startswith("owner:"):
+                    owner = desc.split(":", 1)[1].strip().lower()
+                    logger.info(f"Owner resolved from app description: {owner}")
+                    return owner
+
+                owner = (app_info.creator or "").lower()
+                logger.info(f"Owner resolved from app.creator: {owner}")
+                return owner
+            except Exception as e:
+                delay = min(base_delay * (2**attempt), 60)
+                logger.warning(
+                    f"Apps API call failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    f" — retrying in {delay:.0f}s"
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+        logger.error(f"Could not resolve owner via Apps API after {max_retries} attempts")
 
     # 2. Fallback: PAT-based resolution
     try:
@@ -400,17 +554,24 @@ def get_token_owner():
         if not host or not token:
             return None
         w = WorkspaceClient(host=host, token=token, auth_type="pat")
-        return w.current_user.me().user_name
+        username = w.current_user.me().user_name
+        return username.lower() if username else username
     except Exception as e:
         logger.warning(f"Could not determine token owner: {e}")
         return None
 
 
 def get_request_user():
-    """Extract user email from Databricks Apps request headers."""
-    return request.headers.get("X-Forwarded-Email") or \
-           request.headers.get("X-Forwarded-User") or \
-           request.headers.get("X-Databricks-User-Email")
+    """Extract user email from Databricks Apps request headers.
+
+    Returns lowercase email to ensure case-insensitive matching against app_owner.
+    """
+    email = (
+        request.headers.get("X-Forwarded-Email")
+        or request.headers.get("X-Forwarded-User")
+        or request.headers.get("X-Databricks-User-Email")
+    )
+    return email.lower() if email else email
 
 
 def _is_databricks_apps():
@@ -463,9 +624,12 @@ def _check_ws_authorization():
         return True  # Local dev only
 
     # Socket.IO passes HTTP headers from the initial handshake via request context
-    current_user = request.headers.get("X-Forwarded-Email") or \
-                   request.headers.get("X-Forwarded-User") or \
-                   request.headers.get("X-Databricks-User-Email")
+    raw_user = (
+        request.headers.get("X-Forwarded-Email")
+        or request.headers.get("X-Forwarded-User")
+        or request.headers.get("X-Databricks-User-Email")
+    )
+    current_user = raw_user.lower() if raw_user else raw_user
 
     if not current_user:
         if _is_databricks_apps():
@@ -600,7 +764,7 @@ def read_pty_output(session_id, fd):
         try:
             readable, _, errors = select.select([fd], [], [fd], 0.05)
             if readable or errors:
-                output = os.read(fd, 4096)
+                output = os.read(fd, 65536)
                 if not output:
                     # EOF — process exited
                     break
@@ -921,13 +1085,14 @@ def configure_pat():
 
     # Immediately mint a controlled short-lived token from the user-pasted PAT.
     # This gives us a token ID we own — all future rotations can revoke the old one.
-    # The user-pasted PAT becomes unused after this (expires per its own lifetime).
     os.environ["DATABRICKS_TOKEN"] = token
     pat_rotator._current_token = token
     pat_rotator._current_token_id = None
     rotated = pat_rotator._rotate_once()
     if rotated:
         token = pat_rotator.token  # use the newly minted token from here on
+        # Revoke only the bootstrap PAT — leave other user PATs intact (#98)
+        pat_rotator.revoke_bootstrap_token()
     else:
         # Rotation failed — fall back to user-pasted token (still valid)
         pat_rotator._write_databrickscfg(token)
@@ -951,6 +1116,11 @@ def configure_pat():
 @app.route("/api/session", methods=["POST"])
 def create_session():
     """Create a new terminal session."""
+    # Quick reject before forking a PTY (approximate — authoritative check below)
+    with sessions_lock:
+        if len(sessions) >= MAX_CONCURRENT_SESSIONS:
+            return jsonify({"error": f"Maximum {MAX_CONCURRENT_SESSIONS} concurrent sessions reached. Close an existing session first."}), 429
+
     data = request.get_json(silent=True) or {}
     label = data.get("label", "")
     try:
@@ -961,9 +1131,12 @@ def create_session():
         # Remove Claude Code env vars so the browser terminal isn't seen as nested
         shell_env.pop("CLAUDECODE", None)
         shell_env.pop("CLAUDE_CODE_SESSION", None)
-        # Remove DATABRICKS_TOKEN so CLI/SDK reads from ~/.databrickscfg (always
-        # current after rotation) instead of inheriting a stale env var snapshot
+        # Remove DATABRICKS_TOKEN and DATABRICKS_HOST so CLI/SDK reads from
+        # ~/.databrickscfg (always current after rotation) instead of inheriting
+        # a stale env var snapshot. The SDK skips config file loading when
+        # DATABRICKS_HOST is set in env (even without credentials).
         shell_env.pop("DATABRICKS_TOKEN", None)
+        shell_env.pop("DATABRICKS_HOST", None)
         # Ensure HOME is set correctly
         if not shell_env.get("HOME") or shell_env["HOME"] == "/":
             shell_env["HOME"] = "/app/python/source_code"
@@ -989,6 +1162,15 @@ def create_session():
         session_id = str(uuid.uuid4())
 
         with sessions_lock:
+            # Authoritative check under the same lock as insertion — prevents
+            # TOCTOU race where two concurrent requests both pass the early check.
+            if len(sessions) >= MAX_CONCURRENT_SESSIONS:
+                os.close(master_fd)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                return jsonify({"error": f"Maximum {MAX_CONCURRENT_SESSIONS} concurrent sessions reached. Close an existing session first."}), 429
             sessions[session_id] = {
                 "master_fd": master_fd,
                 "pid": pid,

@@ -1,6 +1,6 @@
 """Auto-rotate short-lived PATs in the background.
 
-Mints a new 15-minute PAT every 10 minutes, writes to ~/.databrickscfg
+Mints a new 4-hour PAT every 3 hours, writes to ~/.databrickscfg
 (immediate CLI/SDK use), and revokes the old PAT. Rotation only runs
 while active sessions exist. If the app restarts, the interactive PAT
 prompt re-provisions credentials on next session. Fixes #81.
@@ -18,8 +18,8 @@ from utils import ensure_https
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOKEN_LIFETIME = 900        # 15 minutes
-DEFAULT_ROTATION_INTERVAL = 600     # 10 minutes
+DEFAULT_TOKEN_LIFETIME = 14400      # 4 hours
+DEFAULT_ROTATION_INTERVAL = 10800   # 3 hours
 
 
 class PATRotator:
@@ -160,6 +160,64 @@ class PATRotator:
                         f"expires in {self._token_lifetime}s). First rotation — no old token to revoke.")
 
         return True
+
+    def revoke_bootstrap_token(self):
+        """Revoke only the bootstrap PAT after the first rotation.
+
+        Called once after the bootstrap PAT is replaced by a controlled
+        short-lived token.  Lists all tokens, identifies the bootstrap
+        as the most-recently-created token without a "coda-auto-rotated"
+        comment, and revokes only that one.  Other user PATs (notebooks,
+        CI, etc.) are left untouched.
+        """
+        current_id = self._current_token_id
+        token = self._current_token
+        if not token or not current_id:
+            return
+
+        try:
+            resp = requests.get(
+                f"{self._host}/api/2.0/token/list",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Bootstrap cleanup: failed to list tokens ({resp.status_code})")
+                return
+        except requests.RequestException as e:
+            logger.warning(f"Bootstrap cleanup: list request failed: {e}")
+            return
+
+        token_infos = resp.json().get("token_infos", [])
+
+        # Find the bootstrap PAT: newest non-coda token that isn't the current one
+        candidates = [
+            info for info in token_infos
+            if info.get("token_id") != current_id
+            and info.get("comment", "") != "coda-auto-rotated"
+        ]
+        if not candidates:
+            logger.info("Bootstrap cleanup: no bootstrap token candidate found")
+            return
+
+        # The bootstrap PAT is the most recently created candidate
+        bootstrap = max(candidates, key=lambda t: t.get("creation_time", 0))
+        tid = bootstrap.get("token_id")
+        comment = bootstrap.get("comment", "(no comment)")
+
+        try:
+            del_resp = requests.post(
+                f"{self._host}/api/2.0/token/delete",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"token_id": tid},
+                timeout=30
+            )
+            if del_resp.status_code == 200:
+                logger.info(f"Bootstrap cleanup: revoked bootstrap PAT {tid} ({comment})")
+            else:
+                logger.warning(f"Bootstrap cleanup: failed to revoke {tid} ({del_resp.status_code})")
+        except requests.RequestException as e:
+            logger.warning(f"Bootstrap cleanup: revoke request failed: {e}")
 
     def _persist_token(self, token):
         """Write rotated token to all persistence layers."""

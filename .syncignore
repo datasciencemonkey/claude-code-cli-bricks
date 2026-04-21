@@ -1,0 +1,32 @@
+# Large directories that should never be uploaded to workspace
+vendor/
+.venv/
+venv/
+
+# Build artifacts and caches
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+uv.lock
+
+# Local config and secrets
+.env
+.databricks/
+.claude/
+.git/
+
+# Test artifacts
+evidence/
+.relentless_logs/
+_gates.json
+_validation_report.json
+
+# Git worktrees
+.worktrees/
+
+# Uploads
+uploads/
+
+# Node modules (if any)
+node_modules/
