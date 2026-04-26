@@ -112,6 +112,7 @@ setup_state = {
         {"id": "gemini",     "label": "Configuring Gemini CLI",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "databricks", "label": "Setting up Databricks CLI",    "status": "pending", "started_at": None, "completed_at": None, "error": None},
         {"id": "mlflow",     "label": "Enabling MLflow tracing",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
+        {"id": "memory",     "label": "Wiring Lakebase memory",       "status": "pending", "started_at": None, "completed_at": None, "error": None},
     ]
 }
 
@@ -378,6 +379,10 @@ def run_setup():
             for step_id, command in parallel_steps
         ]
         wait(futures)
+
+    # Sequential post-parallel steps (these modify settings.json and must not race)
+    # setup_memory writes a Stop hook alongside setup_mlflow's hook — must run after
+    _run_step("memory", ["uv", "run", "python", "setup_memory.py"])
 
     with setup_lock:
         any_error = any(s["status"] == "error" for s in setup_state["steps"])

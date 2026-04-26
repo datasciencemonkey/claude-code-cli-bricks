@@ -4,8 +4,11 @@ annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
+anthropic==0.96.0
+    # via coda (pyproject.toml)
 anyio==4.13.0
     # via
+    #   anthropic
     #   claude-agent-sdk
     #   httpx
     #   mcp
@@ -51,6 +54,10 @@ databricks-sdk==0.102.0
     # via
     #   coda (pyproject.toml)
     #   mlflow-skinny
+distro==1.9.0
+    # via anthropic
+docstring-parser==0.18.0
+    # via anthropic
 fastapi==0.135.3
     # via mlflow-skinny
 flask==3.1.3
@@ -73,7 +80,9 @@ h11==0.16.0
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
-    # via mcp
+    # via
+    #   anthropic
+    #   mcp
 httpx-sse==0.4.3
     # via mcp
 idna==3.11
@@ -91,6 +100,8 @@ jinja2==3.1.6
     # via
     #   flask
     #   flask-socketio
+jiter==0.14.0
+    # via anthropic
 jsonschema==4.26.0
     # via mcp
 jsonschema-specifications==2025.9.1
@@ -122,6 +133,12 @@ protobuf==6.33.6
     #   databricks-sdk
     #   mlflow-skinny
     #   opentelemetry-proto
+psycopg==3.3.3
+    # via coda (pyproject.toml)
+psycopg-binary==3.3.3
+    # via psycopg
+psycopg-pool==3.3.0
+    # via psycopg
 pyasn1==0.6.3
     # via pyasn1-modules
 pyasn1-modules==0.4.2
@@ -130,6 +147,7 @@ pycparser==3.0
     # via cffi
 pydantic==2.12.5
     # via
+    #   anthropic
     #   fastapi
     #   mcp
     #   mlflow-skinny
@@ -171,6 +189,8 @@ simple-websocket==1.1.0
     #   python-engineio
 smmap==5.0.3
     # via gitdb
+sniffio==1.3.1
+    # via anthropic
 sqlparse==0.5.5
     # via mlflow-skinny
 sse-starlette==3.3.4
@@ -182,6 +202,7 @@ starlette==1.0.0
     #   sse-starlette
 typing-extensions==4.15.0
     # via
+    #   anthropic
     #   anyio
     #   fastapi
     #   mcp
@@ -189,6 +210,8 @@ typing-extensions==4.15.0
     #   opentelemetry-api
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   psycopg
+    #   psycopg-pool
     #   pydantic
     #   pydantic-core
     #   referencing
