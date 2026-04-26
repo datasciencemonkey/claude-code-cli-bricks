@@ -14,3 +14,16 @@ env:
     value: 0
   - name: MAX_CONCURRENT_SESSIONS
     value: "5"
+  # Lakebase memory — Databricks auto-injects PGHOST/PGPORT/PGDATABASE/PGUSER/PGSSLMODE
+  # when a "postgres" database resource is configured on the app. You still must set
+  # ENDPOINT_NAME manually — generate_database_credential() needs the endpoint path.
+  # Wire via: make link-resources LAKEBASE_ENDPOINT=projects/.../branches/.../endpoints/... PROFILE=<profile>
+  # Memory feature is disabled when ENDPOINT_NAME is absent.
+  - name: ENDPOINT_NAME
+    valueFrom: ENDPOINT_NAME
+  # Model used for memory extraction (cheap/fast Haiku by default).
+  # Must be a Databricks Model Serving endpoint name — ANTHROPIC_BASE_URL points
+  # at the Databricks Claude proxy, which rejects Anthropic-style model IDs
+  # (e.g. "claude-haiku-4-5-20251001") with ENDPOINT_NOT_FOUND 404.
+  - name: MEMORY_EXTRACTION_MODEL
+    value: databricks-claude-haiku-4-5
