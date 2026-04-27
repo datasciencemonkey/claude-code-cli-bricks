@@ -18,6 +18,8 @@ files from that path.)
 from __future__ import annotations
 
 import os
+import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +35,26 @@ _CAP_PER_SECTION = 12
 
 _BEGIN_MARKER = "<!-- BEGIN CODA MEMORY -->"
 _END_MARKER = "<!-- END CODA MEMORY -->"
+
+# Memory-injection defense: drop memories whose content reads as a directive
+# rather than a passive observation. Rejection beats rewriting because a
+# partially-stripped directive can still steer an LLM. URLs are tolerated
+# only in "reference" memories (which legitimately record doc/repo pointers);
+# shell-command patterns are dropped regardless of type. Logged to stderr.
+_URL_RE = re.compile(r"https?://\S+")
+_SHELL_CMD_RE = re.compile(
+    r"\b(curl|wget|sh|bash|zsh|rm|chmod|sudo|export|eval|source)\s+\S+",
+    re.IGNORECASE,
+)
+
+
+def _suspicious_flags(content: str, mem_type: str) -> list[str]:
+    flags: list[str] = []
+    if _SHELL_CMD_RE.search(content):
+        flags.append("shell")
+    if mem_type != "reference" and _URL_RE.search(content):
+        flags.append("url")
+    return flags
 
 
 def _claude_md_path() -> Path:
@@ -63,14 +85,30 @@ def _render_memory_section(memories: list[dict]) -> str:
         items = by_type.get(mem_type, [])
         if not items:
             continue
-        lines.append(heading)
+        rendered: list[str] = []
         for item in items[:_CAP_PER_SECTION]:
+            flags = _suspicious_flags(item["content"], mem_type)
+            if flags:
+                # Dropped, not rewritten: a partial sanitization could still
+                # carry directive intent. Logged for observability.
+                print(
+                    f"[memory-injector] dropped {mem_type} memory "
+                    f"({','.join(flags)}): {item['content'][:100]!r}",
+                    file=sys.stderr,
+                )
+                continue
             project_tag = (
                 f" _(project: {item['project_name']})_"
                 if item.get("project_name")
                 else ""
             )
-            lines.append(f"- {item['content']}{project_tag}")
+            rendered.append(f"- {item['content']}{project_tag}")
+        if not rendered:
+            # Whole section was filtered out — skip the heading too rather than
+            # leaving a bare heading with no items below it.
+            continue
+        lines.append(heading)
+        lines.extend(rendered)
         lines.append("")
     lines.append(_END_MARKER)
     return "\n".join(lines)

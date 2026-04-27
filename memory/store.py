@@ -18,12 +18,19 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from datetime import datetime
 from typing import Any
 
 import psycopg
 from databricks.sdk import WorkspaceClient
 from psycopg_pool import ConnectionPool
+
+# Memory-injection defense: cap content length at write-time. The extraction
+# prompt asks Haiku for "one sentence per memory" — 500 chars is generous and
+# catches the case where Haiku gets confused by a long block and extracts a
+# whole paragraph (a common entry path for indirect prompt injection).
+_MAX_CONTENT_LEN = 500
 
 _sdk_client: WorkspaceClient | None = None
 _db_user: str | None = None
@@ -164,6 +171,13 @@ def upsert_memories(
         for mem in memories:
             content = mem.get("content", "").strip()
             if not content:
+                continue
+            if len(content) > _MAX_CONTENT_LEN:
+                print(
+                    f"[memory-store] rejected memory > {_MAX_CONTENT_LEN} chars "
+                    f"({len(content)} chars): {content[:80]!r}...",
+                    file=sys.stderr,
+                )
                 continue
             # psycopg 3: rowcount lives on the cursor returned by conn.execute(),
             # not on the connection itself. Capture the cursor to read it.
