@@ -78,6 +78,27 @@ else:
 gemini_dir = home / ".gemini"
 gemini_dir.mkdir(exist_ok=True)
 
+# Pre-trust ~/projects/ so Gemini CLI loads .env and project settings.
+# Without this, Gemini's security engine silently skips .env loading in
+# untrusted workspaces, causing auth failures (see gemini-cli#20005).
+projects_dir = str(home / "projects")
+trusted_folders_path = gemini_dir / "trustedFolders.json"
+try:
+    if trusted_folders_path.exists():
+        trusted = json.loads(trusted_folders_path.read_text())
+    else:
+        trusted = {}
+    if projects_dir not in trusted:
+        trusted[projects_dir] = True
+    # Also trust home dir so ~/.gemini/.env is always loadable
+    home_str = str(home)
+    if home_str not in trusted:
+        trusted[home_str] = True
+    trusted_folders_path.write_text(json.dumps(trusted, indent=2))
+    print(f"Gemini trusted folders configured: {trusted_folders_path}")
+except Exception as e:
+    print(f"Warning: could not write trustedFolders.json: {e}")
+
 # Write .env file with Databricks endpoint configuration
 # Gemini CLI auto-loads env from ~/.gemini/.env
 # The Google-native endpoint on Databricks mirrors /serving-endpoints/anthropic
