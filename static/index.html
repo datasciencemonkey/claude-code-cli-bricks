@@ -2127,7 +2127,7 @@
           if (vResp.ok) { const vData = await vResp.json(); appVersion = vData.version || appVersion; }
         } catch(e) { /* fallback */ }
 
-        status.textContent = 'Initializing terminal...';
+        status.textContent = '';
 
         if (typeof Terminal === 'undefined') throw new Error('xterm.js not loaded');
         if (typeof FitAddon === 'undefined') throw new Error('FitAddon not loaded');
