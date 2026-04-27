@@ -49,7 +49,9 @@ hermes_bin = home / ".local" / "bin" / "hermes"
 # Minimal install from git — core deps (openai, anthropic, prompt_toolkit, rich,
 # httpx, pyyaml, pydantic) cover chat + Databricks model serving. Not on PyPI,
 # so we install directly from GitHub. uv tool install handles venv + binary.
+# The mcp package is needed for HTTP transport (DeepWiki, Exa MCP servers).
 HERMES_PKG = "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git"
+HERMES_EXTRA_DEPS = ["mcp>=1.2.0"]
 
 # 1. Install Hermes Agent (always, even without token).
 local_bin = home / ".local" / "bin"
@@ -66,8 +68,13 @@ def _run(cmd, **kwargs):
 if not hermes_bin.exists():
     print("Installing Hermes Agent from PyPI (minimal)...")
 
+    install_cmd = ["uv", "tool", "install"]
+    for dep in HERMES_EXTRA_DEPS:
+        install_cmd.extend(["--with", dep])
+    install_cmd.append(HERMES_PKG)
+
     rc, _, err = _run(
-        ["uv", "tool", "install", HERMES_PKG],
+        install_cmd,
         timeout=600,
     )
     if rc != 0:
