@@ -88,12 +88,12 @@ try:
         trusted = json.loads(trusted_folders_path.read_text())
     else:
         trusted = {}
-    if projects_dir not in trusted:
-        trusted[projects_dir] = True
+    if trusted.get(projects_dir) != "TRUST_FOLDER":
+        trusted[projects_dir] = "TRUST_FOLDER"
     # Also trust home dir so ~/.gemini/.env is always loadable
     home_str = str(home)
-    if home_str not in trusted:
-        trusted[home_str] = True
+    if trusted.get(home_str) != "TRUST_FOLDER":
+        trusted[home_str] = "TRUST_FOLDER"
     trusted_folders_path.write_text(json.dumps(trusted, indent=2))
     print(f"Gemini trusted folders configured: {trusted_folders_path}")
 except Exception as e:
