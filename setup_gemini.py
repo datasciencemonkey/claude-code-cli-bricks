@@ -84,7 +84,7 @@ gemini_dir.mkdir(exist_ok=True)
 env_content = f"""# Databricks Model Serving - Google Gemini native endpoint
 GEMINI_MODEL={gemini_model}
 GOOGLE_GEMINI_BASE_URL={gemini_base_url}
-GEMINI_API_KEY_AUTH_MECHANISM="bearer"
+GEMINI_API_KEY_AUTH_MECHANISM=bearer
 GEMINI_API_KEY={auth_token}
 """
 

@@ -1009,6 +1009,9 @@ def create_session():
         # DATABRICKS_HOST is set in env (even without credentials).
         shell_env.pop("DATABRICKS_TOKEN", None)
         shell_env.pop("DATABRICKS_HOST", None)
+        # Also strip CLI-specific API keys so they read from config files
+        # (always current after rotation) instead of stale env snapshots.
+        shell_env.pop("GEMINI_API_KEY", None)
         # Ensure HOME is set correctly
         if not shell_env.get("HOME") or shell_env["HOME"] == "/":
             shell_env["HOME"] = "/app/python/source_code"
