@@ -123,7 +123,7 @@ model_catalog = [
     "databricks-gpt-5-1-codex-max",
     "databricks-gemini-2-5-flash",
     "databricks-gemini-2-5-pro",
-    "databricks-gemini-3-1-pro",
+    "databricks-gemini-2-5-pro",
 ]
 
 lines = []

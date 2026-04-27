@@ -26,7 +26,7 @@ home = Path(os.environ["HOME"])
 
 host = os.environ.get("DATABRICKS_HOST", "")
 token = os.environ.get("DATABRICKS_TOKEN", "")
-gemini_model = os.environ.get("GEMINI_MODEL", "databricks-gemini-3-1-pro")
+gemini_model = os.environ.get("GEMINI_MODEL", "databricks-gemini-2-5-pro")
 
 # 1. Install Gemini CLI into ~/.local/bin (always, even without token)
 local_bin = home / ".local" / "bin"

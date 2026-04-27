@@ -9,7 +9,7 @@ env:
   - name: ANTHROPIC_MODEL
     value: databricks-claude-opus-4-6
   - name: GEMINI_MODEL
-    value: databricks-gemini-3-1-pro
+    value: databricks-gemini-2-5-pro
   - name: HERMES_MODEL
     value: databricks-claude-opus-4-7
   - name: HERMES_FALLBACK_MODEL
