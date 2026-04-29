@@ -60,12 +60,22 @@ def read_settings(tmp_path):
 class TestMlflowEnvVars:
     """Verify MLflow environment variables are added to settings.json."""
 
-    def test_tracing_enabled(self, tmp_path):
+    def test_tracing_disabled_by_default(self, tmp_path):
         write_existing_settings(tmp_path, {"env": {"ANTHROPIC_MODEL": "test"}})
         result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
         assert result.returncode == 0
         settings = read_settings(tmp_path)
         assert settings["env"]["MLFLOW_CLAUDE_TRACING_ENABLED"] == "false"
+
+    def test_tracing_enabled_when_env_true(self, tmp_path):
+        write_existing_settings(tmp_path, {"env": {"ANTHROPIC_MODEL": "test"}})
+        result = run_setup_mlflow(tmp_path, {
+            "APP_OWNER": "jane@company.com",
+            "MLFLOW_CLAUDE_TRACING_ENABLED": "true",
+        })
+        assert result.returncode == 0
+        settings = read_settings(tmp_path)
+        assert settings["env"]["MLFLOW_CLAUDE_TRACING_ENABLED"] == "true"
 
     def test_tracking_uri(self, tmp_path):
         write_existing_settings(tmp_path, {"env": {}})
@@ -97,26 +107,54 @@ class TestMlflowEnvVars:
 # ---------------------------------------------------------------------------
 
 class TestStopHook:
-    """Verify the MLflow Stop hook is added to settings.json."""
+    """Verify the MLflow Stop hook is only added when tracing is enabled."""
 
-    def test_stop_hook_present(self, tmp_path):
+    def test_stop_hook_absent_by_default(self, tmp_path):
         write_existing_settings(tmp_path, {"env": {}})
         result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
+        assert result.returncode == 0
+        settings = read_settings(tmp_path)
+        stop_hooks = settings.get("hooks", {}).get("Stop", [])
+        assert len(stop_hooks) == 0
+
+    def test_stop_hook_present_when_tracing_enabled(self, tmp_path):
+        write_existing_settings(tmp_path, {"env": {}})
+        result = run_setup_mlflow(tmp_path, {
+            "APP_OWNER": "jane@company.com",
+            "MLFLOW_CLAUDE_TRACING_ENABLED": "true",
+        })
         assert result.returncode == 0
         settings = read_settings(tmp_path)
         assert "hooks" in settings
         assert "Stop" in settings["hooks"]
         assert len(settings["hooks"]["Stop"]) == 1
 
-    def test_stop_hook_command(self, tmp_path):
+    def test_stop_hook_delegates_to_shell_script(self, tmp_path):
+        """Hook must delegate to the mlflow-trace-stop.sh wrapper script.
+
+        The wrapper backgrounds the handler via nohup/disown so the Stop chain
+        returns in <1s. The shell script itself uses --project and invokes
+        stop_hook_handler; we verify the hook command points at the script and
+        that the script exists and contains the expected implementation.
+        """
         write_existing_settings(tmp_path, {"env": {}})
-        result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
+        result = run_setup_mlflow(tmp_path, {
+            "APP_OWNER": "jane@company.com",
+            "MLFLOW_CLAUDE_TRACING_ENABLED": "true",
+        })
         assert result.returncode == 0
         settings = read_settings(tmp_path)
         hook = settings["hooks"]["Stop"][0]["hooks"][0]
         assert hook["type"] == "command"
-        assert "stop_hook_handler" in hook["command"]
-        assert "mlflow.claude_code.hooks" in hook["command"]
+        assert "bash" in hook["command"]
+        assert "mlflow-trace-stop.sh" in hook["command"]
+        # Verify the script itself is present and contains the required logic
+        script_path = hook["command"].split(" ", 1)[1]
+        assert os.path.isfile(script_path), f"hook script not found: {script_path}"
+        script_content = open(script_path).read()
+        assert "--project" in script_content
+        assert "stop_hook_handler" in script_content
+        assert "mlflow.claude_code.hooks" in script_content
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +167,7 @@ class TestSettingsMerge:
     def test_preserves_existing_env_vars(self, tmp_path):
         write_existing_settings(tmp_path, {
             "env": {
-                "ANTHROPIC_MODEL": "databricks-claude-opus-4-6",
+                "ANTHROPIC_MODEL": "databricks-claude-opus-4-7",
                 "ANTHROPIC_BASE_URL": "https://test.com/anthropic",
                 "ANTHROPIC_AUTH_TOKEN": "secret",
             }
@@ -137,7 +175,7 @@ class TestSettingsMerge:
         result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
         assert result.returncode == 0
         settings = read_settings(tmp_path)
-        assert settings["env"]["ANTHROPIC_MODEL"] == "databricks-claude-opus-4-6"
+        assert settings["env"]["ANTHROPIC_MODEL"] == "databricks-claude-opus-4-7"
         assert settings["env"]["ANTHROPIC_BASE_URL"] == "https://test.com/anthropic"
         assert settings["env"]["ANTHROPIC_AUTH_TOKEN"] == "secret"
         assert settings["env"]["MLFLOW_CLAUDE_TRACING_ENABLED"] == "false"
@@ -149,7 +187,10 @@ class TestSettingsMerge:
                 "PreToolUse": [{"hooks": [{"type": "command", "command": "echo pre"}]}]
             }
         })
-        result = run_setup_mlflow(tmp_path, {"APP_OWNER": "jane@company.com"})
+        result = run_setup_mlflow(tmp_path, {
+            "APP_OWNER": "jane@company.com",
+            "MLFLOW_CLAUDE_TRACING_ENABLED": "true",
+        })
         assert result.returncode == 0
         settings = read_settings(tmp_path)
         assert "PreToolUse" in settings["hooks"]
@@ -187,9 +228,11 @@ class TestAppOwnerExport:
 
     def test_app_owner_set_in_env(self):
         import app as app_module
+        import app_state
         with mock.patch.object(app_module, "get_token_owner", return_value="owner@test.com"), \
              mock.patch.object(app_module, "cleanup_stale_sessions"), \
              mock.patch.object(app_module, "run_setup"), \
+             mock.patch.object(app_state, "set_app_owner"), \
              mock.patch("threading.Thread") as mock_thread:
             mock_thread.return_value.start = mock.MagicMock()
             app_module.initialize_app()
@@ -197,10 +240,12 @@ class TestAppOwnerExport:
 
     def test_app_owner_not_set_when_unknown(self):
         import app as app_module
+        import app_state
         os.environ.pop("APP_OWNER", None)
         with mock.patch.object(app_module, "get_token_owner", return_value=None), \
              mock.patch.object(app_module, "cleanup_stale_sessions"), \
              mock.patch.object(app_module, "run_setup"), \
+             mock.patch.object(app_state, "set_app_owner"), \
              mock.patch("threading.Thread") as mock_thread:
             mock_thread.return_value.start = mock.MagicMock()
             app_module.initialize_app()
