@@ -117,7 +117,7 @@ opentelemetry-semantic-conventions==0.62b0
     # via opentelemetry-sdk
 packaging==26.1
     # via mlflow-skinny
-protobuf==6.33.6
+protobuf==7.34.1
     # via
     #   databricks-sdk
     #   mlflow-skinny
