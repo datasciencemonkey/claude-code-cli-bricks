@@ -12,7 +12,6 @@ Auth: GEMINI_API_KEY_AUTH_MECHANISM=bearer sends Databricks PAT as Bearer token.
 """
 import os
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -127,18 +126,7 @@ settings_path = gemini_dir / "settings.json"
 settings_path.write_text(json.dumps(settings, indent=2))
 print(f"Gemini CLI settings configured: {settings_path}")
 
-# 5. Copy Claude skills into .gemini/skills for shared reference
-claude_skills_dir = home / ".claude" / "skills"
-gemini_skills_dir = gemini_dir / "skills"
-if claude_skills_dir.exists():
-    if gemini_skills_dir.exists():
-        shutil.rmtree(gemini_skills_dir)
-    shutil.copytree(claude_skills_dir, gemini_skills_dir)
-    print(f"Skills copied: {claude_skills_dir} -> {gemini_skills_dir}")
-else:
-    print(f"No Claude skills found at {claude_skills_dir}, skipping copy")
-
-# 6. Adapt CLAUDE.md to GEMINI.md for Gemini CLI
+# 5. Adapt CLAUDE.md to GEMINI.md for Gemini CLI
 # Look for CLAUDE.md in common locations
 claude_md_locations = [
     Path(__file__).parent / "CLAUDE.md",  # Same directory as setup script
