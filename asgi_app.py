@@ -28,10 +28,14 @@ logger = logging.getLogger(__name__)
 
 def create_asgi_app():
     """Build the combined ASGI application."""
-    from app import app as flask_app
+    from app import app as flask_app, initialize_app
     from mcp_server import mcp as mcp_instance, set_app_hooks
     from app import mcp_create_pty_session, mcp_send_input, mcp_close_pty_session
     from utils import ensure_https
+
+    # Initialize Flask app (owner resolution, cleanup thread, etc.)
+    # This was previously done by gunicorn's post_worker_init hook.
+    initialize_app()
 
     # Wire MCP tools to PTY infrastructure
     set_app_hooks(
