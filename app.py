@@ -805,7 +805,7 @@ def cleanup_stale_sessions():
 def authorize_request():
     """Check authorization before processing any request."""
     # Skip auth for health check, setup status, and Socket.IO (has own auth via connect event)
-    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat", "/api/app-state") or request.path.startswith("/socket.io"):
+    if request.path in ("/health", "/api/setup-status", "/api/pat-status", "/api/configure-pat", "/api/app-state") or request.path.startswith("/socket.io") or request.path.startswith("/mcp"):
         return None
 
     authorized, user = check_authorization()
@@ -820,6 +820,20 @@ def authorize_request():
 
 @app.after_request
 def set_security_headers(response):
+    # CORS for MCP endpoint (Genie Code cross-origin requests)
+    if request.path.startswith("/mcp"):
+        origin = request.headers.get("Origin", "")
+        databricks_host = os.environ.get("DATABRICKS_HOST", "")
+        if databricks_host and origin:
+            allowed = ensure_https(databricks_host)
+            if origin.rstrip("/") == allowed.rstrip("/"):
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+        # Also handle preflight OPTIONS
+        if request.method == "OPTIONS":
+            response.status_code = 204
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
@@ -1080,6 +1094,92 @@ def create_session():
         return jsonify({"error": str(e)}), 500
 
 
+# ── MCP Integration Helpers ──────────────────────────────────────────
+
+
+def mcp_create_pty_session(label: str = "hermes-mcp") -> str:
+    """Create a PTY session for MCP use. Returns the PTY session_id."""
+    with sessions_lock:
+        if len(sessions) >= MAX_CONCURRENT_SESSIONS:
+            raise RuntimeError(
+                f"Maximum {MAX_CONCURRENT_SESSIONS} concurrent sessions reached."
+            )
+
+    master_fd, slave_fd = pty.openpty()
+
+    shell_env = os.environ.copy()
+    shell_env["TERM"] = "xterm-256color"
+    shell_env.pop("CLAUDECODE", None)
+    shell_env.pop("CLAUDE_CODE_SESSION", None)
+    shell_env.pop("DATABRICKS_TOKEN", None)
+    shell_env.pop("DATABRICKS_HOST", None)
+    shell_env.pop("GEMINI_API_KEY", None)
+    if not shell_env.get("HOME") or shell_env["HOME"] == "/":
+        shell_env["HOME"] = "/app/python/source_code"
+    local_bin = f"{shell_env['HOME']}/.local/bin"
+    shell_env["PATH"] = f"{local_bin}:{shell_env.get('PATH', '')}"
+
+    projects_dir = os.path.join(shell_env["HOME"], "projects")
+    os.makedirs(projects_dir, exist_ok=True)
+
+    pid = subprocess.Popen(
+        ["/bin/bash"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
+        env=shell_env,
+        cwd=projects_dir,
+    ).pid
+    os.close(slave_fd)
+
+    session_id = str(uuid.uuid4())
+
+    with sessions_lock:
+        if len(sessions) >= MAX_CONCURRENT_SESSIONS:
+            os.close(master_fd)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Maximum {MAX_CONCURRENT_SESSIONS} concurrent sessions reached."
+            )
+        sessions[session_id] = {
+            "master_fd": master_fd,
+            "pid": pid,
+            "output_buffer": deque(maxlen=1000),
+            "lock": threading.Lock(),
+            "last_poll_time": time.time(),
+            "created_at": time.time(),
+            "label": label,
+        }
+
+    thread = threading.Thread(
+        target=read_pty_output, args=(session_id, master_fd), daemon=True
+    )
+    thread.start()
+
+    return session_id
+
+
+def mcp_send_input(session_id: str, data: str):
+    """Send input to a PTY session."""
+    session = _get_session(session_id)
+    if not session:
+        raise RuntimeError(f"Session {session_id} not found")
+    with session["lock"]:
+        os.write(session["master_fd"], data.encode())
+
+
+def mcp_close_pty_session(session_id: str):
+    """Close a PTY session."""
+    session = _get_session(session_id)
+    if not session:
+        return
+    terminate_session(session_id, session["pid"], session["master_fd"])
+
+
 @app.route("/api/input", methods=["POST"])
 def send_input():
     """Send input to the terminal."""
@@ -1295,6 +1395,84 @@ def initialize_app(local_dev=False):
     cleanup_thread = threading.Thread(target=cleanup_stale_sessions, daemon=True)
     cleanup_thread.start()
     logger.info(f"Started session cleanup thread (timeout={SESSION_TIMEOUT_SECONDS}s, interval={CLEANUP_INTERVAL_SECONDS}s)")
+
+
+# ── MCP Server Mount ─────────────────────────────────────────────────
+from mcp_server import mcp as mcp_instance, set_app_hooks
+
+# Wire MCP tools to PTY infrastructure
+set_app_hooks(
+    create_session_fn=mcp_create_pty_session,
+    send_input_fn=mcp_send_input,
+    close_session_fn=mcp_close_pty_session,
+)
+
+# Mount MCP ASGI app at /mcp using a WSGI-to-ASGI bridge
+import asyncio
+from io import BytesIO
+
+_mcp_asgi_app = mcp_instance.streamable_http_app()
+
+
+def _mcp_wsgi_bridge(environ, start_response):
+    """Thin WSGI wrapper around the MCP ASGI app."""
+    content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
+    body = environ['wsgi.input'].read(content_length) if content_length else b''
+
+    async def _run():
+        status_code = 500
+        resp_headers = []
+        resp_body = BytesIO()
+
+        async def receive():
+            return {"type": "http.request", "body": body}
+
+        async def send(message):
+            nonlocal status_code, resp_headers
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                resp_headers = [
+                    (k.decode() if isinstance(k, bytes) else k,
+                     v.decode() if isinstance(v, bytes) else v)
+                    for k, v in message.get("headers", [])
+                ]
+            elif message["type"] == "http.response.body":
+                resp_body.write(message.get("body", b""))
+
+        # Build ASGI scope
+        headers = []
+        for key, value in environ.items():
+            if key.startswith("HTTP_"):
+                header_name = key[5:].lower().replace("_", "-")
+                headers.append((header_name.encode(), value.encode()))
+        if environ.get("CONTENT_TYPE"):
+            headers.append((b"content-type", environ["CONTENT_TYPE"].encode()))
+        if environ.get("CONTENT_LENGTH"):
+            headers.append((b"content-length", environ["CONTENT_LENGTH"].encode()))
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": environ.get("SERVER_PROTOCOL", "HTTP/1.1").split("/")[-1],
+            "method": environ["REQUEST_METHOD"],
+            "path": environ.get("PATH_INFO", "/"),
+            "query_string": environ.get("QUERY_STRING", "").encode(),
+            "headers": headers,
+            "server": (environ.get("SERVER_NAME", "localhost"),
+                      int(environ.get("SERVER_PORT", 8000))),
+        }
+
+        await _mcp_asgi_app(scope, receive, send)
+        return status_code, resp_headers, resp_body.getvalue()
+
+    s, h, b = asyncio.run(_run())
+    start_response(f"{s} ", h)
+    return [b]
+
+
+# Use DispatcherMiddleware to mount at /mcp
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/mcp": _mcp_wsgi_bridge})
 
 
 if __name__ == "__main__":
