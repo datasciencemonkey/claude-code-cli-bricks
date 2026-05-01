@@ -29,6 +29,8 @@ mcp = FastMCP(
         "CoDA MCP server — create Hermes agent sessions, run coding tasks, "
         "poll status, retrieve results, and close sessions."
     ),
+    stateless_http=True,
+    json_response=True,
 )
 
 # ── App hooks (PTY integration) ─────────────────────────────────────
