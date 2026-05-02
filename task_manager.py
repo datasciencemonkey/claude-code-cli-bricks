@@ -266,9 +266,22 @@ def get_task_status(task_id: str, session_id: str) -> dict:
         return {"status": "not_found"}
 
 
+def _find_result_json(task_dir: str) -> str | None:
+    """Find result.json — agents may write it at root or in results/ subdir."""
+    for candidate in [
+        os.path.join(task_dir, "result.json"),
+        os.path.join(task_dir, "results", "result.json"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def get_task_result(task_id: str, session_id: str) -> dict | None:
     """Read result.json if it exists; otherwise return None."""
-    result_path = os.path.join(_task_dir(session_id, task_id), "result.json")
+    result_path = _find_result_json(_task_dir(session_id, task_id))
+    if not result_path:
+        return None
     try:
         with open(result_path) as f:
             return json.load(f)

@@ -86,7 +86,6 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
       in the last 5 minutes, writes a timeout result and completes.
     """
     tdir = task_manager._task_dir(session_id, task_id)
-    result_path = os.path.join(tdir, "result.json")
     status_path = os.path.join(tdir, "status.jsonl")
     start = time.time()
     stale_threshold = 300  # 5 minutes
@@ -94,8 +93,9 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
     while True:
         time.sleep(5)
 
-        # Check for result.json
-        if os.path.isfile(result_path):
+        # Check for result.json (may be at root or in results/ subdir)
+        result_path = task_manager._find_result_json(tdir)
+        if result_path:
             try:
                 task_manager.complete_task(session_id, task_id)
                 logger.info("Watcher: task %s completed (result found)", task_id)
