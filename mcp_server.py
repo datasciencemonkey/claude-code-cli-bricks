@@ -35,8 +35,13 @@ if _databricks_host:
 mcp = FastMCP(
     "coda",
     instructions=(
-        "CoDA MCP server — create Hermes agent sessions, run coding tasks, "
-        "poll status, retrieve results, and close sessions."
+        "CoDA MCP server — delegate coding tasks to Hermes Agent on Databricks. "
+        "Workflow: 1) coda_create_session to start a session, "
+        "2) coda_run_task to submit work (returns immediately), "
+        "3) poll coda_get_status every 10-15 seconds until status is 'completed' or 'failed', "
+        "4) coda_get_result to retrieve the structured output, "
+        "5) coda_close_session when done. "
+        "Sessions are reusable — send follow-up tasks to the same session for context continuity."
     ),
     stateless_http=True,
     json_response=True,
@@ -175,12 +180,19 @@ async def coda_run_task(
     timeout_s: int = 3600,
     permissions: str = "smart",
 ) -> str:
-    """Send a coding task to Hermes in an existing session.
+    """Send a coding task to Hermes Agent in an existing session.
 
-    ``context`` is a JSON string (MCP tools cannot accept dicts).
-    ``permissions`` can be ``"smart"`` (default) or ``"yolo"`` (auto-approve).
+    This is ASYNCHRONOUS — it returns immediately with a task_id while Hermes
+    works in the background. You MUST poll coda_get_status every 10-15 seconds
+    until status is "completed" or "failed", then call coda_get_result to
+    retrieve the structured output.
 
-    Returns JSON with ``task_id`` and ``status``.
+    Workflow: coda_run_task → poll coda_get_status → coda_get_result
+
+    ``context`` is a JSON string with Unity Catalog metadata (tables, schemas).
+    ``permissions`` can be ``"smart"`` (default, safe) or ``"yolo"`` (auto-approve all).
+
+    Returns JSON with ``task_id`` and ``status: "running"``.
     """
     try:
         # Parse context JSON
@@ -247,10 +259,13 @@ async def coda_get_status(
     task_id: str,
     session_id: str,
 ) -> str:
-    """Poll task progress.
+    """Poll task progress. Call this every 10-15 seconds after coda_run_task.
 
     Returns JSON with ``task_id``, ``status``, ``elapsed_s``, and
-    optional ``progress`` fields.
+    optional ``progress`` (latest step from the agent).
+
+    Status values: "running", "completed", "failed", "timeout".
+    When status is "completed" or "failed", call coda_get_result for full output.
     """
     try:
         status = task_manager.get_task_status(task_id, session_id)
@@ -276,10 +291,13 @@ async def coda_get_result(
     task_id: str,
     session_id: str,
 ) -> str:
-    """Retrieve completed task result.
+    """Retrieve the structured result of a completed task.
 
-    Returns JSON with ``task_id``, ``status``, ``summary``,
-    ``files_changed``, ``artifacts``, and ``errors``.
+    Call this AFTER coda_get_status returns "completed" or "failed".
+
+    Returns JSON with ``task_id``, ``status``, ``summary`` (what was done),
+    ``files_changed`` (list of modified files), ``artifacts`` (job IDs,
+    commit hashes, etc.), and ``errors`` (if any).
     """
     try:
         result = task_manager.get_task_result(task_id, session_id)
