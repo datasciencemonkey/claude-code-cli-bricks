@@ -37,9 +37,10 @@ mcp = FastMCP(
     instructions=(
         "CoDA MCP server — delegate coding tasks to Hermes Agent on Databricks. "
         "Workflow: 1) coda_create_session to start a session, "
-        "2) coda_run_task to submit work (returns immediately), "
-        "3) poll coda_get_status every 10-15 seconds until status is 'completed' or 'failed', "
-        "4) coda_get_result to retrieve the structured output, "
+        "2) coda_run_task to submit work (returns immediately with task_id), "
+        "3) poll coda_get_status starting at 10s intervals — after 20 polls with no "
+        "completion, exponentially back off (20s, 40s, 80s, up to 5min max), "
+        "4) when status is 'completed' or 'failed', call coda_get_result for structured output, "
         "5) coda_close_session when done. "
         "Sessions are reusable — send follow-up tasks to the same session for context continuity."
     ),
@@ -259,13 +260,16 @@ async def coda_get_status(
     task_id: str,
     session_id: str,
 ) -> str:
-    """Poll task progress. Call this every 10-15 seconds after coda_run_task.
+    """Poll task progress after coda_run_task.
+
+    Polling strategy: start at 10s intervals. After 20 polls without completion,
+    exponentially back off: 20s, 40s, 80s, up to 5 minutes max between polls.
 
     Returns JSON with ``task_id``, ``status``, ``elapsed_s``, and
     optional ``progress`` (latest step from the agent).
 
     Status values: "running", "completed", "failed", "timeout".
-    When status is "completed" or "failed", call coda_get_result for full output.
+    When status is "completed" or "failed", stop polling and call coda_get_result.
     """
     try:
         status = task_manager.get_task_status(task_id, session_id)
