@@ -1397,8 +1397,11 @@ def initialize_app(local_dev=False):
     logger.info(f"Started session cleanup thread (timeout={SESSION_TIMEOUT_SECONDS}s, interval={CLEANUP_INTERVAL_SECONDS}s)")
 
 
-# ── MCP Server Mount ─────────────────────────────────────────────────
-from mcp_server import mcp as mcp_instance, set_app_hooks
+# ── MCP Endpoint ─────────────────────────────────────────────────────
+from mcp_endpoint import mcp_bp
+from mcp_server import set_app_hooks
+
+app.register_blueprint(mcp_bp)
 
 # Wire MCP tools to PTY infrastructure
 set_app_hooks(
@@ -1406,73 +1409,6 @@ set_app_hooks(
     send_input_fn=mcp_send_input,
     close_session_fn=mcp_close_pty_session,
 )
-
-# Mount MCP ASGI app at /mcp using a WSGI-to-ASGI bridge
-import asyncio
-from io import BytesIO
-
-_mcp_asgi_app = mcp_instance.streamable_http_app()
-
-
-def _mcp_wsgi_bridge(environ, start_response):
-    """Thin WSGI wrapper around the MCP ASGI app."""
-    content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
-    body = environ['wsgi.input'].read(content_length) if content_length else b''
-
-    async def _run():
-        status_code = 500
-        resp_headers = []
-        resp_body = BytesIO()
-
-        async def receive():
-            return {"type": "http.request", "body": body}
-
-        async def send(message):
-            nonlocal status_code, resp_headers
-            if message["type"] == "http.response.start":
-                status_code = message["status"]
-                resp_headers = [
-                    (k.decode() if isinstance(k, bytes) else k,
-                     v.decode() if isinstance(v, bytes) else v)
-                    for k, v in message.get("headers", [])
-                ]
-            elif message["type"] == "http.response.body":
-                resp_body.write(message.get("body", b""))
-
-        # Build ASGI scope
-        headers = []
-        for key, value in environ.items():
-            if key.startswith("HTTP_"):
-                header_name = key[5:].lower().replace("_", "-")
-                headers.append((header_name.encode(), value.encode()))
-        if environ.get("CONTENT_TYPE"):
-            headers.append((b"content-type", environ["CONTENT_TYPE"].encode()))
-        if environ.get("CONTENT_LENGTH"):
-            headers.append((b"content-length", environ["CONTENT_LENGTH"].encode()))
-
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": environ.get("SERVER_PROTOCOL", "HTTP/1.1").split("/")[-1],
-            "method": environ["REQUEST_METHOD"],
-            "path": environ.get("PATH_INFO", "/"),
-            "query_string": environ.get("QUERY_STRING", "").encode(),
-            "headers": headers,
-            "server": (environ.get("SERVER_NAME", "localhost"),
-                      int(environ.get("SERVER_PORT", 8000))),
-        }
-
-        await _mcp_asgi_app(scope, receive, send)
-        return status_code, resp_headers, resp_body.getvalue()
-
-    s, h, b = asyncio.run(_run())
-    start_response(f"{s} ", h)
-    return [b]
-
-
-# Use DispatcherMiddleware to mount at /mcp
-from werkzeug.middleware.dispatcher import DispatcherMiddleware
-app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/mcp": _mcp_wsgi_bridge})
 
 
 if __name__ == "__main__":
