@@ -820,20 +820,10 @@ def authorize_request():
 
 @app.after_request
 def set_security_headers(response):
-    # CORS for MCP endpoint (Genie Code cross-origin requests)
+    # MCP endpoint handles its own CORS/headers — skip security headers
+    # that might interfere (CSP connect-src, X-Frame-Options, etc.)
     if request.path.startswith("/mcp"):
-        origin = request.headers.get("Origin", "")
-        databricks_host = os.environ.get("DATABRICKS_HOST", "")
-        if databricks_host and origin:
-            allowed = ensure_https(databricks_host)
-            if origin.rstrip("/") == allowed.rstrip("/"):
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-        # Also handle preflight OPTIONS
-        if request.method == "OPTIONS":
-            response.status_code = 204
+        return response
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
