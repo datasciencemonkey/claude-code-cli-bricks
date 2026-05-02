@@ -15,6 +15,7 @@ import threading
 import time
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 import task_manager
@@ -22,6 +23,14 @@ import task_manager
 logger = logging.getLogger(__name__)
 
 # ── FastMCP instance ────────────────────────────────────────────────
+
+# Build allowed origins from DATABRICKS_HOST for Genie Code requests
+_databricks_host = os.environ.get("DATABRICKS_HOST", "")
+_allowed_origins = []
+if _databricks_host:
+    # Ensure https:// prefix, strip trailing slash
+    origin = _databricks_host if _databricks_host.startswith("https://") else f"https://{_databricks_host}"
+    _allowed_origins.append(origin.rstrip("/"))
 
 mcp = FastMCP(
     "coda",
@@ -31,6 +40,10 @@ mcp = FastMCP(
     ),
     stateless_http=True,
     json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_origins=_allowed_origins,
+    ),
 )
 
 # ── App hooks (PTY integration) ─────────────────────────────────────
