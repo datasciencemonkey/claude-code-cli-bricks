@@ -41,8 +41,7 @@ mcp = FastMCP(
     stateless_http=True,
     json_response=True,
     transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_origins=_allowed_origins,
+        enable_dns_rebinding_protection=False,
     ),
 )
 

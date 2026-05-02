@@ -58,14 +58,26 @@ def _check_origin():
 
 
 def _cors_headers():
-    """Build CORS response headers."""
+    """Build CORS response headers.
+
+    Permissive CORS for /mcp — the Databricks Apps proxy handles auth.
+    """
     headers = {}
     origin = request.headers.get("Origin", "")
     if origin:
         headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, Mcp-Session-Id"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        # Explicitly list all headers Genie Code might send
+        # (wildcard * is incompatible with credentials=true per CORS spec)
+        allowed_headers = ", ".join([
+            "Content-Type", "Authorization", "Accept",
+            "Mcp-Session-Id", "X-Request-Id", "X-Requested-With",
+            "X-Forwarded-Email", "X-Forwarded-User", "X-Databricks-User-Email",
+            "Cookie", "Origin", "Referer",
+        ])
+        headers["Access-Control-Allow-Headers"] = allowed_headers
         headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Max-Age"] = "86400"
     return headers
 
 
@@ -85,13 +97,7 @@ def mcp_handler():
         resp.status_code = 405
         return resp
 
-    # Validate origin
-    if not _check_origin():
-        return jsonify({
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32600, "message": "Invalid origin"}
-        }), 403
+    # Origin validation skipped — Databricks Apps proxy handles auth.
 
     data = request.get_json(silent=True) or {}
     method = data.get("method", "")
