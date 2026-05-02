@@ -138,21 +138,45 @@ def wrap_prompt(
     Uses the ``---CODA-TASK---`` envelope convention so the agent can
     parse metadata from the prompt deterministically.
     """
-    parts = [
-        "---CODA-TASK---",
-        f"task_id: {task_id}",
-        f"session_id: {session_id}",
-        f"email: {email}",
-        f"results_dir: {results_dir}",
-    ]
+    context_block = ""
     if context:
-        parts.append(f"context: {json.dumps(context)}")
+        context_block = f"\nCONTEXT:\n{json.dumps(context, indent=2)}\n"
+
+    hint_line = ""
     if context_hint:
-        parts.append(f"context_hint: {context_hint}")
-    parts.append("---")
-    parts.append(prompt)
-    parts.append("---CODA-TASK---")
-    return "\n".join(parts)
+        hint_line = f"context_hint: {context_hint}\n"
+
+    return (
+        f"---CODA-TASK---\n"
+        f"task_id: {task_id}\n"
+        f"session_id: {session_id}\n"
+        f"user: {email}\n"
+        f"{hint_line}"
+        f"{context_block}\n"
+        f"TASK:\n"
+        f"{prompt}\n"
+        f"\n"
+        f"INSTRUCTIONS:\n"
+        f"1. As you work, append progress lines to {results_dir}/status.jsonl\n"
+        f'   Each line must be valid JSON: {{"step": "label", "message": "what you are doing"}}\n'
+        f"\n"
+        f"2. When you are COMPLETELY DONE, write a SINGLE FILE at this exact path:\n"
+        f"   {results_dir}/result.json\n"
+        f"   It must contain this JSON structure:\n"
+        f"   {{\n"
+        f'     "status": "completed",\n'
+        f'     "summary": "one paragraph describing what you did",\n'
+        f'     "files_changed": ["list", "of", "file", "paths"],\n'
+        f'     "artifacts": {{}},\n'
+        f'     "errors": []\n'
+        f"   }}\n"
+        f"   If you failed, set status to \"failed\" and describe the error.\n"
+        f"   IMPORTANT: result.json is a FILE not a directory. Write it with:\n"
+        f"   echo '{{...}}' > {results_dir}/result.json\n"
+        f"\n"
+        f"3. If you delegate to a sub-agent, update status.jsonl with delegation steps.\n"
+        f"---END-CODA-TASK---"
+    )
 
 
 # ── Task lifecycle ───────────────────────────────────────────────────
