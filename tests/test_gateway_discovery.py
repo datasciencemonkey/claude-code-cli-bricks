@@ -149,6 +149,8 @@ class TestEndpointConstruction:
             "PYTHONPATH": str(SETUP_DIR),
             # Pre-resolve gateway so subprocess skips the network probe
             "_GATEWAY_RESOLVED": "",
+            # Skip CLI install (curl | bash) — tests only verify config files
+            "SKIP_CLAUDE_INSTALL": "1",
         }
         # Ensure DATABRICKS_GATEWAY_HOST is NOT set (test auto-discovery)
         env.pop("DATABRICKS_GATEWAY_HOST", None)
@@ -175,15 +177,15 @@ class TestEndpointConstruction:
         # Gateway is unreachable from test env, so should fall back
         import json
         settings_path = tmp_path / ".claude" / "settings.json"
-        if settings_path.exists():
-            settings = json.loads(settings_path.read_text())
-            base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
-            assert base_url.endswith("/anthropic")
-            # Either gateway or serving-endpoints is valid
-            assert (
-                "ai-gateway.cloud.databricks.com" in base_url
-                or "serving-endpoints/anthropic" in base_url
-            )
+        assert settings_path.exists(), "settings.json was not written"
+        settings = json.loads(settings_path.read_text())
+        base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
+        assert base_url.endswith("/anthropic")
+        # Either gateway or serving-endpoints is valid
+        assert (
+            "ai-gateway.cloud.databricks.com" in base_url
+            or "serving-endpoints/anthropic" in base_url
+        )
 
     def test_setup_claude_explicit_override(self, tmp_path):
         """setup_claude.py should prefer explicit DATABRICKS_GATEWAY_HOST."""
@@ -196,10 +198,10 @@ class TestEndpointConstruction:
 
         import json
         settings_path = tmp_path / ".claude" / "settings.json"
-        if settings_path.exists():
-            settings = json.loads(settings_path.read_text())
-            base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
-            assert "custom.gateway.example.com" in base_url
+        assert settings_path.exists(), "settings.json was not written"
+        settings = json.loads(settings_path.read_text())
+        base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
+        assert "custom.gateway.example.com" in base_url
 
     def test_setup_claude_fallback_no_gateway(self, tmp_path):
         """setup_claude.py falls back to DATABRICKS_HOST when no gateway available."""
@@ -210,10 +212,10 @@ class TestEndpointConstruction:
 
         import json
         settings_path = tmp_path / ".claude" / "settings.json"
-        if settings_path.exists():
-            settings = json.loads(settings_path.read_text())
-            base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
-            assert "test.cloud.databricks.com/serving-endpoints/anthropic" in base_url
+        assert settings_path.exists(), "settings.json was not written"
+        settings = json.loads(settings_path.read_text())
+        base_url = settings.get("env", {}).get("ANTHROPIC_BASE_URL", "")
+        assert "test.cloud.databricks.com/serving-endpoints/anthropic" in base_url
 
     @mock.patch("utils._probe_gateway", return_value=True)
     def test_codex_gateway_url_construction(self, mock_probe):
