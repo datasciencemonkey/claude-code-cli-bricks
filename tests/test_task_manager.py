@@ -290,15 +290,16 @@ class TestGetTaskResult:
 
 
 class TestCompleteTask:
-    def test_marks_session_idle(self, isolated_sessions):
+    def test_marks_session_closed(self, isolated_sessions):
+        """v2: sessions are ephemeral — complete_task auto-closes the session."""
         import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
         task_manager.complete_task(sid, tid)
         data = task_manager._read_session(sid)
-        assert data["status"] == "ready"
-        assert data["current_task"] is None
+        assert data["status"] == "closed"
+        assert "closed_at" in data
 
     def test_appends_to_completed_tasks(self, isolated_sessions):
         import task_manager
@@ -309,14 +310,15 @@ class TestCompleteTask:
         data = task_manager._read_session(sid)
         assert tid in data["completed_tasks"]
 
-    def test_can_create_new_task_after_complete(self, isolated_sessions):
+    def test_closed_session_rejects_new_task(self, isolated_sessions):
+        """v2: ephemeral sessions — new tasks need new sessions."""
         import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid1 = task_manager.create_task(sid, "first", "a@b.com")["task_id"]
         task_manager.complete_task(sid, tid1)
-        tid2 = task_manager.create_task(sid, "second", "a@b.com")["task_id"]
-        assert tid2 != tid1
+        with pytest.raises(task_manager.SessionNotFoundError):
+            task_manager.create_task(sid, "second", "a@b.com")
 
     def test_appends_done_to_status_jsonl(self, isolated_sessions):
         import task_manager
@@ -416,17 +418,24 @@ class TestEdgeCases:
         with pytest.raises(task_manager.SessionNotFoundError):
             task_manager.create_task(sid, "go", "a@b.com")
 
-    def test_multiple_completed_tasks_accumulate(self, isolated_sessions):
+    def test_multiple_tasks_across_sessions(self, isolated_sessions):
+        """v2: each task gets its own ephemeral session; all appear in list_all_tasks."""
         import task_manager
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tids = []
         for i in range(3):
+            sid = task_manager.create_session("a@b.com", "u1")["session_id"]
             tid = task_manager.create_task(sid, f"task {i}", "a@b.com")["task_id"]
             task_manager.complete_task(sid, tid)
             tids.append(tid)
-        data = task_manager._read_session(sid)
-        assert data["completed_tasks"] == tids
+            # Each session auto-closes
+            data = task_manager._read_session(sid)
+            assert data["status"] == "closed"
+
+        all_tasks = task_manager.list_all_tasks()
+        all_tids = [t["task_id"] for t in all_tasks]
+        for tid in tids:
+            assert tid in all_tids
 
     def test_corrupt_session_json_raises(self, isolated_sessions):
         import task_manager
