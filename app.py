@@ -149,6 +149,11 @@ def _run_step(step_id, command):
         env.pop("DATABRICKS_CLIENT_ID", None)
         env.pop("DATABRICKS_CLIENT_SECRET", None)
 
+        # Ensure setup scripts can still import from repo root (e.g. `from utils import ...`)
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{app_dir}:{existing_pp}" if existing_pp else app_dir
+
         result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
         if result.returncode == 0:
             _update_step(step_id, status="complete", completed_at=time.time())
@@ -324,7 +329,7 @@ def _configure_all_cli_auth(token):
     # 3. Re-run Codex, OpenCode, Gemini setup scripts with token in env
     #    They are idempotent: detect CLI already installed, just write config files
     env = {**os.environ, "DATABRICKS_TOKEN": token}
-    for script in ["setup_codex.py", "setup_opencode.py", "setup_gemini.py", "setup_hermes.py"]:
+    for script in ["setup/setup_codex.py", "setup/setup_opencode.py", "setup/setup_gemini.py", "setup/setup_hermes.py"]:
         try:
             result = subprocess.run(
                 ["uv", "run", "python", script],
@@ -357,26 +362,26 @@ def run_setup():
         _update_step("git", status="error", completed_at=time.time(), error=str(e))
 
     _run_step("micro", ["bash", "-c",
-        "mkdir -p ~/.local/bin && bash install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
+        "mkdir -p ~/.local/bin && bash scripts/install_micro.sh && mv micro ~/.local/bin/ 2>/dev/null || true"])
 
-    _run_step("gh", ["bash", "install_gh.sh"])
+    _run_step("gh", ["bash", "scripts/install_gh.sh"])
 
     # --- Upgrade Databricks CLI (runtime image ships an older version) ---
-    _run_step("dbcli", ["bash", "install_databricks_cli.sh"])
+    _run_step("dbcli", ["bash", "scripts/install_databricks_cli.sh"])
 
     # --- Content-filter proxy (must be running before OpenCode starts) ---
     # Sanitizes requests/responses between OpenCode and Databricks
     # (see OpenCode #5028, docs/plans/2026-03-11-litellm-empty-content-blocks-design.md)
-    _run_step("proxy", ["uv", "run", "python", "setup_proxy.py"])
+    _run_step("proxy", ["uv", "run", "python", "setup/setup_proxy.py"])
 
     # --- Parallel agent setup (all independent of each other) ---
     parallel_steps = [
-        ("claude",     ["uv", "run", "python", "setup_claude.py"]),
-        ("codex",      ["uv", "run", "python", "setup_codex.py"]),
-        ("opencode",   ["uv", "run", "python", "setup_opencode.py"]),
-        ("gemini",     ["uv", "run", "python", "setup_gemini.py"]),
-        ("hermes",     ["uv", "run", "python", "setup_hermes.py"]),
-        ("databricks", ["uv", "run", "python", "setup_databricks.py"]),
+        ("claude",     ["uv", "run", "python", "setup/setup_claude.py"]),
+        ("codex",      ["uv", "run", "python", "setup/setup_codex.py"]),
+        ("opencode",   ["uv", "run", "python", "setup/setup_opencode.py"]),
+        ("gemini",     ["uv", "run", "python", "setup/setup_gemini.py"]),
+        ("hermes",     ["uv", "run", "python", "setup/setup_hermes.py"]),
+        ("databricks", ["uv", "run", "python", "setup/setup_databricks.py"]),
     ]
 
     with ThreadPoolExecutor(max_workers=len(parallel_steps)) as executor:
@@ -389,7 +394,7 @@ def run_setup():
     # --- MLflow setup runs AFTER claude setup to avoid settings.json race ---
     # setup_mlflow.py merges env vars into ~/.claude/settings.json which
     # setup_claude.py also writes; running sequentially prevents clobbering.
-    _run_step("mlflow", ["uv", "run", "python", "setup_mlflow.py"])
+    _run_step("mlflow", ["uv", "run", "python", "setup/setup_mlflow.py"])
 
     # Sync latest token into all CLI configs — covers the race where PAT
     # rotation happened while a setup script was still installing (the

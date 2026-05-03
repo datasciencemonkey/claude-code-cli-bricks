@@ -132,7 +132,7 @@ class TestGetGatewayHost:
 # Integration tests — verify endpoint URLs constructed by setup scripts
 # ---------------------------------------------------------------------------
 
-SETUP_DIR = Path(__file__).parent.parent
+SETUP_DIR = Path(__file__).parent.parent / "setup"
 
 
 class TestEndpointConstruction:
@@ -146,7 +146,7 @@ class TestEndpointConstruction:
             "DATABRICKS_TOKEN": "dapi_test_token",
             "DATABRICKS_WORKSPACE_ID": "6280049833385130",
             "PATH": os.environ.get("PATH", ""),
-            "PYTHONPATH": str(SETUP_DIR),
+            "PYTHONPATH": str(SETUP_DIR.parent),
             # Pre-resolve gateway so subprocess skips the network probe
             "_GATEWAY_RESOLVED": "",
             # Skip CLI install (curl | bash) — tests only verify config files
