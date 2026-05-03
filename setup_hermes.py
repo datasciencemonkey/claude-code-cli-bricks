@@ -257,6 +257,22 @@ to execute them, either directly or by delegating to specialized sub-agents.
 - Projects live at `~/projects/` and sync to `/Workspace/Users/{email}/` on git commit.
 - You have 39 Databricks and workflow skills available.
 
+### Prior Session Context
+
+When your prompt includes a `PRIOR SESSION:` block, it means this task continues
+work from a previous session. The prior session's results are stored on disk:
+
+```
+~/.coda/sessions/{previous_session_id}/tasks/*/result.json
+```
+
+**Read those result files** to understand what was done before. Each result.json contains:
+- `summary` — what the prior task accomplished
+- `files_changed` — which files were created or modified
+- `artifacts` — job IDs, commit hashes, dashboard URLs, etc.
+
+Use this context to continue the work without asking the user to repeat themselves.
+
 ### Sub-Agents Available
 
 You have three coding agents you can delegate work to. Choose the best one for each subtask:
@@ -298,6 +314,20 @@ When a task is large enough to benefit from parallel work, use Claude Code's tea
 ```bash
 claude -p "Create a team of 3 agents to: [task]. Agent 1 handles [X], Agent 2 handles [Y], Agent 3 handles [Z]. Coordinate and merge results." --allowedTools "Read,Edit,Bash" --max-turns 100
 ```
+
+### Ephemeral Session Model
+
+Each task runs in its own short-lived session. When the task completes, the session closes
+automatically. You will NOT receive follow-up tasks in the same session.
+
+**What this means for you:**
+- **Be self-contained.** Complete the entire task in one go — there is no "next message."
+- **Read prior context if provided.** If the prompt has a `PRIOR SESSION:` block, read
+  those result files to understand what was done before. This is how task chaining works.
+- **Write thorough results.** Your `result.json` is the only thing the next task (or the
+  user) will see. Include a clear summary, all files changed, and any artifacts created.
+- **Don't rely on in-memory state.** Anything you want to persist must go to disk —
+  either in the result files, git commits, or the workspace.
 
 ### Single-User Mode
 

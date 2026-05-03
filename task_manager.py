@@ -8,6 +8,7 @@ Layout on disk
     session.json          – session metadata
     tasks/{task-id}/
         prompt.txt        – wrapped prompt sent to the agent
+        meta.json         – task metadata (email, timestamps, chaining)
         status.jsonl      – append-only progress log
         result.json       – final output (written by the agent)
 """
@@ -26,6 +27,14 @@ SESSIONS_DIR = os.path.join(
     os.environ.get("HOME", "/app/python/source_code"), ".coda", "sessions"
 )
 
+# ── Concurrency limit ───────────────────────────────────────────────
+
+MAX_CONCURRENT_TASKS = int(os.environ.get("CODA_MAX_CONCURRENT", "5"))
+
+# ── Task TTL (seconds) ──────────────────────────────────────────────
+
+TASK_TTL_S = int(os.environ.get("CODA_TASK_TTL", str(24 * 3600)))  # 24h
+
 # ── Exceptions ───────────────────────────────────────────────────────
 
 
@@ -35,6 +44,10 @@ class SessionBusyError(Exception):
 
 class SessionNotFoundError(Exception):
     """Raised when the requested session does not exist or is closed."""
+
+
+class ConcurrencyLimitError(Exception):
+    """Raised when MAX_CONCURRENT_TASKS running tasks already exist."""
 
 
 # ── ID generators ────────────────────────────────────────────────────
@@ -131,7 +144,8 @@ def wrap_prompt(
     prompt: str,
     context: dict | None,
     results_dir: str,
-    context_hint: str | None,
+    context_hint: str | None = None,
+    previous_session_id: str | None = None,
 ) -> str:
     """Build the full prompt string written to ``prompt.txt``.
 
@@ -146,12 +160,21 @@ def wrap_prompt(
     if context_hint:
         hint_line = f"context_hint: {context_hint}\n"
 
+    prior_session_block = ""
+    if previous_session_id:
+        prior_dir = _session_dir(previous_session_id)
+        prior_session_block = (
+            f"\nPRIOR SESSION: {previous_session_id}\n"
+            f"Read {prior_dir}/tasks/*/result.json for context on prior work.\n"
+        )
+
     return (
         f"---CODA-TASK---\n"
         f"task_id: {task_id}\n"
         f"session_id: {session_id}\n"
         f"user: {email}\n"
         f"{hint_line}"
+        f"{prior_session_block}"
         f"{context_block}\n"
         f"TASK:\n"
         f"{prompt}\n"
@@ -189,7 +212,8 @@ def create_task(
     context: dict | None = None,
     context_hint: str | None = None,
     timeout_s: int | None = None,
-    permissions: list | None = None,
+    permissions: str | None = None,
+    previous_session_id: str | None = None,
 ) -> dict:
     """Create a task inside an existing session.
 
@@ -227,13 +251,26 @@ def create_task(
         context=context,
         results_dir=results_dir,
         context_hint=context_hint,
+        previous_session_id=previous_session_id,
     )
     with open(os.path.join(tdir, "prompt.txt"), "w") as f:
         f.write(wrapped)
 
+    # Write meta.json for inbox scanning
+    now = time.time()
+    meta = {
+        "email": email,
+        "created_at": now,
+        "previous_session_id": previous_session_id or "",
+        "permissions": permissions or "smart",
+        "timeout_s": timeout_s or 3600,
+        "prompt_summary": prompt[:100],
+    }
+    _write_json(os.path.join(tdir, "meta.json"), meta)
+
     # Seed status log
     with open(os.path.join(tdir, "status.jsonl"), "w") as f:
-        f.write(json.dumps({"status": "running", "ts": time.time()}) + "\n")
+        f.write(json.dumps({"status": "running", "ts": now}) + "\n")
 
     # Mark session busy
     data = _read_session(session_id)
@@ -293,10 +330,10 @@ def get_task_result(task_id: str, session_id: str) -> dict | None:
 
 
 def complete_task(session_id: str, task_id: str) -> None:
-    """Mark a task as done and return the session to ready.
+    """Mark a task as done and auto-close the session.
 
-    Appends a ``done`` entry to status.jsonl, clears ``current_task``,
-    and adds the task_id to ``completed_tasks``.
+    Appends a ``done`` entry to status.jsonl, adds task_id to
+    ``completed_tasks``, and closes the session (v2: ephemeral sessions).
     """
     session = _read_session(session_id)
 
@@ -305,11 +342,200 @@ def complete_task(session_id: str, task_id: str) -> None:
     with open(status_path, "a") as f:
         f.write(json.dumps({"status": "done", "ts": time.time()}) + "\n")
 
-    # Update session
-    session["status"] = "ready"
+    # Update session — auto-close (v2: sessions are ephemeral)
+    session["status"] = "closed"
     session["current_task"] = None
+    session["closed_at"] = time.time()
     if task_id not in session["completed_tasks"]:
         session["completed_tasks"].append(task_id)
     _write_json(_session_file(session_id), session)
 
-    logger.info("Completed task %s in session %s", task_id, session_id)
+    logger.info("Completed task %s in session %s (auto-closed)", task_id, session_id)
+
+
+# ── Inbox: list all tasks across sessions ───────────────────────────
+
+
+def list_all_tasks(email: str = "", status_filter: str = "") -> list[dict]:
+    """Scan all sessions and return a flat list of tasks for the inbox.
+
+    Returns tasks from the last ``TASK_TTL_S`` seconds, sorted most recent first.
+    Each entry includes task_id, session_id, status, elapsed_s, prompt_summary,
+    summary (if completed), progress (if running), previous_session_id, created_at.
+    """
+    now = time.time()
+    cutoff = now - TASK_TTL_S
+    tasks = []
+
+    if not os.path.isdir(SESSIONS_DIR):
+        return tasks
+
+    for sess_name in os.listdir(SESSIONS_DIR):
+        sess_dir = os.path.join(SESSIONS_DIR, sess_name)
+        if not os.path.isdir(sess_dir):
+            continue
+
+        tasks_dir = os.path.join(sess_dir, "tasks")
+        if not os.path.isdir(tasks_dir):
+            continue
+
+        for task_name in os.listdir(tasks_dir):
+            task_dir = os.path.join(tasks_dir, task_name)
+            if not os.path.isdir(task_dir):
+                continue
+
+            # Read meta.json
+            meta_path = os.path.join(task_dir, "meta.json")
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                # Legacy task without meta.json — skip or build minimal entry
+                meta = {}
+
+            created_at = meta.get("created_at", 0)
+            if created_at < cutoff:
+                continue
+
+            # Filter by email
+            if email and meta.get("email", "") != email:
+                continue
+
+            # Determine task status from status.jsonl
+            task_status = _read_last_status(task_dir)
+
+            # Check for result.json to determine completion
+            result_path = _find_result_json(task_dir)
+            summary = ""
+            if result_path:
+                try:
+                    with open(result_path) as f:
+                        result_data = json.load(f)
+                    task_status = result_data.get("status", "completed")
+                    summary = result_data.get("summary", "")
+                except (OSError, json.JSONDecodeError):
+                    pass
+
+            # Filter by status
+            if status_filter and task_status != status_filter:
+                continue
+
+            # Get progress for running tasks
+            progress = ""
+            if task_status == "running":
+                progress = _read_last_progress(task_dir)
+
+            elapsed_s = round(now - created_at, 1)
+
+            entry = {
+                "task_id": task_name,
+                "session_id": sess_name,
+                "status": task_status,
+                "elapsed_s": elapsed_s,
+                "prompt_summary": meta.get("prompt_summary", ""),
+                "previous_session_id": meta.get("previous_session_id", ""),
+                "created_at": created_at,
+            }
+            if summary:
+                entry["summary"] = summary
+            if progress:
+                entry["progress"] = progress
+
+            tasks.append(entry)
+
+    # Sort most recent first
+    tasks.sort(key=lambda t: t["created_at"], reverse=True)
+    return tasks
+
+
+def _read_last_status(task_dir: str) -> str:
+    """Read the last status from status.jsonl."""
+    status_path = os.path.join(task_dir, "status.jsonl")
+    try:
+        last = None
+        with open(status_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    last = json.loads(line)
+        return (last or {}).get("status", "unknown")
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+
+
+def _read_last_progress(task_dir: str) -> str:
+    """Read the last progress message from status.jsonl."""
+    status_path = os.path.join(task_dir, "status.jsonl")
+    try:
+        last = None
+        with open(status_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    last = json.loads(line)
+        return (last or {}).get("message", "")
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
+# ── Concurrency check ──────────────────────────────────────────────
+
+
+def count_running_tasks() -> int:
+    """Count tasks currently in 'running' state across all sessions."""
+    count = 0
+    if not os.path.isdir(SESSIONS_DIR):
+        return count
+
+    for sess_name in os.listdir(SESSIONS_DIR):
+        sess_file = os.path.join(SESSIONS_DIR, sess_name, "session.json")
+        try:
+            with open(sess_file) as f:
+                session = json.load(f)
+            if session.get("status") == "busy":
+                count += 1
+        except (OSError, json.JSONDecodeError):
+            continue
+    return count
+
+
+# ── Cleanup expired sessions ────────────────────────────────────────
+
+
+def cleanup_expired_tasks() -> int:
+    """Remove session directories older than TASK_TTL_S. Returns count removed."""
+    import shutil
+
+    now = time.time()
+    cutoff = now - TASK_TTL_S
+    removed = 0
+
+    if not os.path.isdir(SESSIONS_DIR):
+        return removed
+
+    for sess_name in os.listdir(SESSIONS_DIR):
+        sess_dir = os.path.join(SESSIONS_DIR, sess_name)
+        if not os.path.isdir(sess_dir):
+            continue
+
+        sess_file = os.path.join(sess_dir, "session.json")
+        try:
+            with open(sess_file) as f:
+                session = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        # Only clean closed sessions past TTL
+        if session.get("status") != "closed":
+            continue
+
+        closed_at = session.get("closed_at", session.get("created_at", 0))
+        if closed_at < cutoff:
+            try:
+                shutil.rmtree(sess_dir)
+                removed += 1
+                logger.info("Cleaned up expired session %s", sess_name)
+            except OSError:
+                logger.warning("Failed to clean up session %s", sess_name)
+
+    return removed

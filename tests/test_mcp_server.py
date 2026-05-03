@@ -1,6 +1,7 @@
-"""Tests for mcp_server — MCP tool layer over task_manager."""
+"""Tests for mcp_server — v2 background execution + inbox API."""
 
 import json
+import os
 from unittest import mock
 
 import pytest
@@ -40,149 +41,83 @@ def _parse(result: str) -> dict:
 
 
 class TestToolRegistration:
-    def test_all_five_tools_registered(self):
-        import mcp_server
-
-        mcp = mcp_server.mcp
-        # FastMCP stores tools in _tool_manager._tools dict
-        tool_mgr = mcp._tool_manager
-        tool_names = set(tool_mgr._tools.keys())
-        expected = {
-            "coda_create_session",
-            "coda_run_task",
-            "coda_get_status",
-            "coda_get_result",
-            "coda_close_session",
-        }
-        assert expected.issubset(tool_names), (
-            f"Missing tools: {expected - tool_names}"
-        )
-
-    def test_tool_count_is_five(self):
+    def test_three_tools_registered(self):
         import mcp_server
 
         tool_mgr = mcp_server.mcp._tool_manager
-        assert len(tool_mgr._tools) == 5
+        tool_names = set(tool_mgr._tools.keys())
+        expected = {"coda_run", "coda_inbox", "coda_get_result"}
+        assert expected == tool_names, f"Expected {expected}, got {tool_names}"
 
-
-# ── coda_create_session ──────────────────────────────────────────────
-
-
-class TestCodaCreateSession:
-    @pytest.mark.asyncio
-    async def test_creates_session_disk_only(self):
-        """Without app hooks, creates disk session only."""
+    def test_tool_count_is_three(self):
         import mcp_server
 
-        result = await mcp_server.coda_create_session(
-            email="a@b.com", user_id="u1", label="test"
-        )
-        data = _parse(result)
-        assert data["status"] == "ready"
-        assert data["session_id"].startswith("sess-")
-
-    @pytest.mark.asyncio
-    async def test_creates_session_with_pty_hook(self):
-        """With app hooks, also creates PTY session."""
-        import mcp_server
-
-        mock_create = mock.Mock(return_value="pty-abc123")
-        mcp_server.set_app_hooks(
-            create_session_fn=mock_create,
-            send_input_fn=mock.Mock(),
-            close_session_fn=mock.Mock(),
-        )
-
-        result = await mcp_server.coda_create_session(
-            email="a@b.com", user_id="u1", label="test"
-        )
-        data = _parse(result)
-        assert data["status"] == "ready"
-        mock_create.assert_called_once_with(label="hermes-mcp")
-
-        # Verify pty_session_id was stored
-        import task_manager
-
-        session = task_manager._read_session(data["session_id"])
-        assert session["pty_session_id"] == "pty-abc123"
+        tool_mgr = mcp_server.mcp._tool_manager
+        assert len(tool_mgr._tools) == 3
 
 
-# ── coda_run_task ────────────────────────────────────────────────────
+# ── coda_run ─────────────────────────────────────────────────────────
 
 
-class TestCodaRunTask:
+class TestCodaRun:
     @pytest.mark.asyncio
     async def test_creates_task_disk_only(self):
-        """Without hooks, creates disk task only."""
+        """Without app hooks, creates session+task on disk, returns immediately."""
         import mcp_server
-        import task_manager
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-
-        result = await mcp_server.coda_run_task(
-            session_id=sid,
+        result = await mcp_server.coda_run(
             prompt="fix the bug",
             email="a@b.com",
         )
         data = _parse(result)
         assert data["status"] == "running"
         assert data["task_id"].startswith("task-")
+        assert data["session_id"].startswith("sess-")
 
     @pytest.mark.asyncio
-    async def test_sends_to_pty_when_hooks_set(self):
-        """With hooks, sends hermes command to PTY."""
+    async def test_auto_creates_session(self):
+        """coda_run auto-creates a session — no separate create_session needed."""
         import mcp_server
         import task_manager
 
+        result = await mcp_server.coda_run(
+            prompt="build pipeline",
+            email="a@b.com",
+        )
+        data = _parse(result)
+        session = task_manager._read_session(data["session_id"])
+        assert session["email"] == "a@b.com"
+        assert session["status"] == "busy"  # task is running
+
+    @pytest.mark.asyncio
+    async def test_sends_to_pty_when_hooks_set(self):
+        """With hooks, creates PTY and sends hermes command."""
+        import mcp_server
+
+        mock_create = mock.Mock(return_value="pty-xyz")
         mock_send = mock.Mock()
         mcp_server.set_app_hooks(
-            create_session_fn=mock.Mock(return_value="pty-xyz"),
+            create_session_fn=mock_create,
             send_input_fn=mock_send,
             close_session_fn=mock.Mock(),
         )
 
-        # Create session with pty_session_id
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        task_manager._update_session_field(sid, "pty_session_id", "pty-xyz")
-
-        with mock.patch("mcp_server.threading") as mock_threading:
-            result = await mcp_server.coda_run_task(
-                session_id=sid,
+        with mock.patch("mcp_server.threading"):
+            result = await mcp_server.coda_run(
                 prompt="fix the bug",
                 email="a@b.com",
             )
 
         data = _parse(result)
         assert data["status"] == "running"
-        # Verify send_input was called with pty session and hermes command
+        mock_create.assert_called_once_with(label="hermes-mcp")
         mock_send.assert_called_once()
-        call_args = mock_send.call_args
-        assert call_args[0][0] == "pty-xyz"  # pty_session_id
-        assert "hermes" in call_args[0][1]  # command contains hermes
-
-    @pytest.mark.asyncio
-    async def test_busy_session_returns_error(self):
-        """Submitting to a busy session returns error JSON."""
-        import mcp_server
-        import task_manager
-
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        task_manager.create_task(sid, "first", "a@b.com")
-
-        result = await mcp_server.coda_run_task(
-            session_id=sid,
-            prompt="second task",
-            email="a@b.com",
-        )
-        data = _parse(result)
-        assert data["status"] == "error"
-        assert "already has a running task" in data["error"].lower()
+        assert "hermes" in mock_send.call_args[0][1]
 
     @pytest.mark.asyncio
     async def test_yolo_permission(self):
-        """permissions='yolo' produces --yolo flag."""
+        """permissions='yolo' produces --yolo flag in PTY command."""
         import mcp_server
-        import task_manager
 
         mock_send = mock.Mock()
         mcp_server.set_app_hooks(
@@ -191,12 +126,8 @@ class TestCodaRunTask:
             close_session_fn=mock.Mock(),
         )
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        task_manager._update_session_field(sid, "pty_session_id", "pty-1")
-
         with mock.patch("mcp_server.threading"):
-            await mcp_server.coda_run_task(
-                session_id=sid,
+            await mcp_server.coda_run(
                 prompt="go fast",
                 email="a@b.com",
                 permissions="yolo",
@@ -205,38 +136,165 @@ class TestCodaRunTask:
         cmd = mock_send.call_args[0][1]
         assert "--yolo" in cmd
 
-
-# ── coda_get_status ──────────────────────────────────────────────────
-
-
-class TestCodaGetStatus:
     @pytest.mark.asyncio
-    async def test_returns_running_status(self):
+    async def test_previous_session_id_in_prompt(self):
+        """previous_session_id appears in the wrapped prompt."""
         import mcp_server
         import task_manager
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
+        # Create a "prior" session with a completed task
+        prior = task_manager.create_session("a@b.com", "u1")
+        prior_sid = prior["session_id"]
 
-        result = await mcp_server.coda_get_status(
-            task_id=tid, session_id=sid
+        result = await mcp_server.coda_run(
+            prompt="add tests",
+            email="a@b.com",
+            previous_session_id=prior_sid,
         )
         data = _parse(result)
-        assert data["task_id"] == tid
-        assert data["status"] == "running"
+
+        # Read the prompt.txt and verify prior session reference
+        tdir = task_manager._task_dir(data["session_id"], data["task_id"])
+        with open(os.path.join(tdir, "prompt.txt")) as f:
+            prompt_text = f.read()
+
+        assert f"PRIOR SESSION: {prior_sid}" in prompt_text
 
     @pytest.mark.asyncio
-    async def test_not_found_task(self):
+    async def test_meta_json_written(self):
+        """coda_run writes meta.json with task metadata."""
         import mcp_server
         import task_manager
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-
-        result = await mcp_server.coda_get_status(
-            task_id="task-nonexist", session_id=sid
+        result = await mcp_server.coda_run(
+            prompt="build a dashboard for sales",
+            email="alice@test.com",
+            previous_session_id="sess-old",
         )
         data = _parse(result)
-        assert data["status"] == "not_found"
+
+        meta_path = os.path.join(
+            task_manager._task_dir(data["session_id"], data["task_id"]),
+            "meta.json",
+        )
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        assert meta["email"] == "alice@test.com"
+        assert meta["previous_session_id"] == "sess-old"
+        assert meta["prompt_summary"] == "build a dashboard for sales"
+        assert "created_at" in meta
+
+    @pytest.mark.asyncio
+    async def test_concurrency_limit(self):
+        """Exceeding MAX_CONCURRENT_TASKS returns an error."""
+        import mcp_server
+
+        with mock.patch("task_manager.MAX_CONCURRENT_TASKS", 1):
+            # First task succeeds
+            r1 = await mcp_server.coda_run(prompt="task1", email="a@b.com")
+            assert _parse(r1)["status"] == "running"
+
+            # Second task should fail (1 already running)
+            r2 = await mcp_server.coda_run(prompt="task2", email="a@b.com")
+            d2 = _parse(r2)
+            assert d2["status"] == "error"
+            assert "concurrency" in d2["error"].lower()
+
+
+# ── coda_inbox ───────────────────────────────────────────────────────
+
+
+class TestCodaInbox:
+    @pytest.mark.asyncio
+    async def test_empty_inbox(self):
+        """No tasks → empty inbox."""
+        import mcp_server
+
+        result = await mcp_server.coda_inbox()
+        data = _parse(result)
+        assert data["tasks"] == []
+        assert data["counts"] == {"running": 0, "completed": 0, "failed": 0}
+
+    @pytest.mark.asyncio
+    async def test_running_task_in_inbox(self):
+        """A running task shows up in the inbox."""
+        import mcp_server
+
+        await mcp_server.coda_run(prompt="build pipeline", email="a@b.com")
+
+        result = await mcp_server.coda_inbox()
+        data = _parse(result)
+        assert len(data["tasks"]) == 1
+        assert data["tasks"][0]["status"] == "running"
+        assert data["tasks"][0]["prompt_summary"] == "build pipeline"
+        assert data["counts"]["running"] == 1
+
+    @pytest.mark.asyncio
+    async def test_completed_task_in_inbox(self):
+        """A completed task shows summary in inbox."""
+        import mcp_server
+        import task_manager
+
+        r = await mcp_server.coda_run(prompt="fix bug", email="a@b.com")
+        d = _parse(r)
+
+        # Simulate agent writing result.json
+        tdir = task_manager._task_dir(d["session_id"], d["task_id"])
+        result_path = os.path.join(tdir, "result.json")
+        with open(result_path, "w") as f:
+            json.dump({
+                "status": "completed",
+                "summary": "Fixed the login bug",
+                "files_changed": ["auth.py"],
+                "artifacts": [],
+                "errors": [],
+            }, f)
+
+        result = await mcp_server.coda_inbox()
+        data = _parse(result)
+        assert len(data["tasks"]) == 1
+        assert data["tasks"][0]["status"] == "completed"
+        assert data["tasks"][0]["summary"] == "Fixed the login bug"
+
+    @pytest.mark.asyncio
+    async def test_status_filter(self):
+        """Filtering inbox by status works."""
+        import mcp_server
+        import task_manager
+
+        # Create two tasks — one running, one completed
+        r1 = await mcp_server.coda_run(prompt="task1", email="a@b.com")
+        d1 = _parse(r1)
+
+        r2 = await mcp_server.coda_run(prompt="task2", email="a@b.com")
+        d2 = _parse(r2)
+
+        # Complete task2
+        tdir = task_manager._task_dir(d2["session_id"], d2["task_id"])
+        with open(os.path.join(tdir, "result.json"), "w") as f:
+            json.dump({"status": "completed", "summary": "done"}, f)
+
+        # Filter running only
+        result = await mcp_server.coda_inbox(status="running")
+        data = _parse(result)
+        assert len(data["tasks"]) == 1
+        assert data["tasks"][0]["task_id"] == d1["task_id"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_tasks_sorted_recent_first(self):
+        """Inbox returns tasks sorted most recent first."""
+        import mcp_server
+
+        r1 = await mcp_server.coda_run(prompt="first", email="a@b.com")
+        r2 = await mcp_server.coda_run(prompt="second", email="a@b.com")
+
+        result = await mcp_server.coda_inbox()
+        data = _parse(result)
+        assert len(data["tasks"]) == 2
+        # Most recent first
+        assert data["tasks"][0]["prompt_summary"] == "second"
+        assert data["tasks"][1]["prompt_summary"] == "first"
 
 
 # ── coda_get_result ──────────────────────────────────────────────────
@@ -247,94 +305,38 @@ class TestCodaGetResult:
     async def test_returns_result(self):
         import mcp_server
         import task_manager
-        import os
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
+        r = await mcp_server.coda_run(prompt="go", email="a@b.com")
+        d = _parse(r)
 
         # Simulate agent writing result.json
-        result_path = os.path.join(
-            task_manager._task_dir(sid, tid), "result.json"
-        )
-        with open(result_path, "w") as f:
-            json.dump(
-                {
-                    "summary": "Fixed the bug",
-                    "files_changed": ["app.py"],
-                    "artifacts": [],
-                    "errors": [],
-                },
-                f,
-            )
+        tdir = task_manager._task_dir(d["session_id"], d["task_id"])
+        with open(os.path.join(tdir, "result.json"), "w") as f:
+            json.dump({
+                "summary": "Fixed the bug",
+                "files_changed": ["app.py"],
+                "artifacts": [],
+                "errors": [],
+            }, f)
 
         result = await mcp_server.coda_get_result(
-            task_id=tid, session_id=sid
+            task_id=d["task_id"], session_id=d["session_id"]
         )
         data = _parse(result)
-        assert data["task_id"] == tid
+        assert data["task_id"] == d["task_id"]
+        assert data["session_id"] == d["session_id"]
         assert data["summary"] == "Fixed the bug"
-        assert data["files_changed"] == ["app.py"]
 
     @pytest.mark.asyncio
     async def test_no_result_yet(self):
         import mcp_server
-        import task_manager
 
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
+        r = await mcp_server.coda_run(prompt="go", email="a@b.com")
+        d = _parse(r)
 
         result = await mcp_server.coda_get_result(
-            task_id=tid, session_id=sid
+            task_id=d["task_id"], session_id=d["session_id"]
         )
         data = _parse(result)
         assert data["status"] == "running"
         assert "not yet available" in data["message"]
-
-
-# ── coda_close_session ───────────────────────────────────────────────
-
-
-class TestCodaCloseSession:
-    @pytest.mark.asyncio
-    async def test_closes_session_disk_only(self):
-        """Without hooks, closes disk session only."""
-        import mcp_server
-        import task_manager
-
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-
-        result = await mcp_server.coda_close_session(session_id=sid)
-        data = _parse(result)
-        assert data["session_id"] == sid
-        assert data["status"] == "closed"
-
-    @pytest.mark.asyncio
-    async def test_closes_pty_when_hooks_set(self):
-        """With hooks, also closes PTY session."""
-        import mcp_server
-        import task_manager
-
-        mock_close = mock.Mock()
-        mcp_server.set_app_hooks(
-            create_session_fn=mock.Mock(),
-            send_input_fn=mock.Mock(),
-            close_session_fn=mock_close,
-        )
-
-        sid = task_manager.create_session("a@b.com", "u1")["session_id"]
-        task_manager._update_session_field(sid, "pty_session_id", "pty-999")
-
-        result = await mcp_server.coda_close_session(session_id=sid)
-        data = _parse(result)
-        assert data["status"] == "closed"
-        mock_close.assert_called_once_with("pty-999")
-
-    @pytest.mark.asyncio
-    async def test_close_nonexistent_returns_error(self):
-        import mcp_server
-
-        result = await mcp_server.coda_close_session(
-            session_id="sess-doesnotexist"
-        )
-        data = _parse(result)
-        assert data["status"] == "error"

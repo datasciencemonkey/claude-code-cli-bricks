@@ -1,5 +1,10 @@
 """MCP server exposing CoDA session/task tools via FastMCP.
 
+v2: Background execution + inbox pattern.
+- ``coda_run`` — fire-and-forget task submission (auto-creates ephemeral session)
+- ``coda_inbox`` — dashboard of all background tasks
+- ``coda_get_result`` — pull full structured result for a completed task
+
 Delegates all disk state to ``task_manager.py``.  PTY operations are
 handled through optional app hooks set via ``set_app_hooks()``.
 
@@ -35,14 +40,15 @@ if _databricks_host:
 mcp = FastMCP(
     "coda",
     instructions=(
-        "CoDA MCP server — delegate coding tasks to Hermes Agent on Databricks. "
-        "Workflow: 1) coda_create_session to start a session, "
-        "2) coda_run_task to submit work (returns immediately with task_id), "
-        "3) poll coda_get_status starting at 10s intervals — after 20 polls with no "
-        "completion, exponentially back off (20s, 40s, 80s, up to 5min max), "
-        "4) when status is 'completed' or 'failed', call coda_get_result for structured output, "
-        "5) coda_close_session when done. "
-        "Sessions are reusable — send follow-up tasks to the same session for context continuity."
+        "CoDA MCP server — delegate coding tasks to AI agents on Databricks. "
+        "Workflow: 1) coda_run to submit work (returns immediately, runs in background), "
+        "2) continue your conversation — the task runs independently, "
+        "3) when the user asks about background work, or you want to check progress, "
+        "call coda_inbox — it shows ALL tasks (running, completed, failed) from the last 24h. "
+        "Use status filter to narrow: coda_inbox(status='running') for pending work only. "
+        "4) for completed tasks, call coda_get_result for full structured output. "
+        "To chain work: pass previous_session_id from a completed task's session_id "
+        "to give the new task context of what was done before."
     ),
     stateless_http=True,
     json_response=True,
@@ -62,9 +68,9 @@ def set_app_hooks(create_session_fn, send_input_fn, close_session_fn):
     """Wire up Flask app callbacks for PTY operations.
 
     When hooks are set:
-    - ``coda_create_session`` creates a PTY via ``create_session_fn(label=...)``
-    - ``coda_run_task`` sends the hermes command via ``send_input_fn(pty_id, cmd)``
-    - ``coda_close_session`` destroys the PTY via ``close_session_fn(pty_id)``
+    - ``coda_run`` creates a PTY via ``create_session_fn(label=...)``
+    - ``coda_run`` sends the hermes command via ``send_input_fn(pty_id, cmd)``
+    - Task completion destroys the PTY via ``close_session_fn(pty_id)``
 
     When hooks are *not* set (e.g. in tests), only disk state is managed.
     """
@@ -81,10 +87,11 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
     """Poll for result.json in a daemon thread.
 
     - Checks every 5 seconds for ``result.json`` in the task directory.
-    - If found, calls ``task_manager.complete_task()``.
+    - If found, calls ``task_manager.complete_task()`` (which auto-closes session).
     - Tracks last activity from ``status.jsonl`` mtime.
     - Timeout: if wall clock exceeds *timeout_s* AND no status update
       in the last 5 minutes, writes a timeout result and completes.
+    - On completion, closes the PTY if hooks are wired.
     """
     tdir = task_manager._task_dir(session_id, task_id)
     status_path = os.path.join(tdir, "status.jsonl")
@@ -99,6 +106,7 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
         if result_path:
             try:
                 task_manager.complete_task(session_id, task_id)
+                _close_pty_for_session(session_id)
                 logger.info("Watcher: task %s completed (result found)", task_id)
             except Exception:
                 logger.exception("Watcher: error completing task %s", task_id)
@@ -116,17 +124,33 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
             if (time.time() - last_activity) > stale_threshold:
                 # Write timeout result and complete
                 try:
-                    task_manager._write_json(result_path, {
+                    timeout_result_path = os.path.join(tdir, "result.json")
+                    task_manager._write_json(timeout_result_path, {
+                        "status": "timeout",
                         "summary": "Task timed out",
                         "files_changed": [],
                         "artifacts": [],
                         "errors": [f"Timeout after {timeout_s}s with no activity for 5 min"],
                     })
                     task_manager.complete_task(session_id, task_id)
+                    _close_pty_for_session(session_id)
                     logger.warning("Watcher: task %s timed out", task_id)
                 except Exception:
                     logger.exception("Watcher: error timing out task %s", task_id)
                 return
+
+
+def _close_pty_for_session(session_id: str) -> None:
+    """Close the PTY associated with a session, if hooks are wired."""
+    if _app_close_session is None:
+        return
+    try:
+        session = task_manager._read_session(session_id)
+        pty_session_id = session.get("pty_session_id")
+        if pty_session_id:
+            _app_close_session(pty_session_id)
+    except Exception:
+        logger.debug("Could not close PTY for session %s", session_id, exc_info=True)
 
 
 # ── Tool definitions ────────────────────────────────────────────────
@@ -139,63 +163,35 @@ def _watch_task(session_id: str, task_id: str, timeout_s: int) -> None:
         idempotentHint=False,
     ),
 )
-async def coda_create_session(
-    email: str,
-    user_id: str = "",
-    label: str = "",
-) -> str:
-    """Create a Hermes agent session.
-
-    Returns JSON with ``session_id`` and ``status``.
-    """
-    try:
-        result = task_manager.create_session(email, user_id, label)
-        session_id = result["session_id"]
-
-        # Create PTY if hooks are wired
-        if _app_create_session is not None:
-            pty_session_id = _app_create_session(label="hermes-mcp")
-            task_manager._update_session_field(
-                session_id, "pty_session_id", pty_session_id
-            )
-
-        return json.dumps(result)
-    except Exception as exc:
-        return json.dumps({"status": "error", "error": str(exc)})
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-    ),
-)
-async def coda_run_task(
-    session_id: str,
+async def coda_run(
     prompt: str,
     email: str,
-    user_id: str = "",
     context: str = "{}",
-    context_hint: str = "",
-    timeout_s: int = 3600,
+    previous_session_id: str = "",
     permissions: str = "smart",
+    timeout_s: int = 3600,
 ) -> str:
-    """Send a coding task to Hermes Agent in an existing session.
+    """Submit a coding task to run in the background.
 
-    This is ASYNCHRONOUS — it returns immediately with a task_id while Hermes
-    works in the background. You MUST poll coda_get_status every 10-15 seconds
-    until status is "completed" or "failed", then call coda_get_result to
-    retrieve the structured output.
-
-    Workflow: coda_run_task → poll coda_get_status → coda_get_result
+    Returns IMMEDIATELY with a task_id and session_id while agents work
+    in the background. Do NOT poll — use coda_inbox to check all tasks at once.
 
     ``context`` is a JSON string with Unity Catalog metadata (tables, schemas).
+    ``previous_session_id`` chains to a prior task's session for context continuity.
     ``permissions`` can be ``"smart"`` (default, safe) or ``"yolo"`` (auto-approve all).
 
-    Returns JSON with ``task_id`` and ``status: "running"``.
+    Returns JSON with ``task_id``, ``session_id``, and ``status: "running"``.
     """
     try:
+        # Check concurrency limit
+        running = task_manager.count_running_tasks()
+        if running >= task_manager.MAX_CONCURRENT_TASKS:
+            return json.dumps({
+                "status": "error",
+                "error": f"Concurrency limit reached ({task_manager.MAX_CONCURRENT_TASKS} "
+                         f"tasks running). Try again when a task completes.",
+            })
+
         # Parse context JSON
         try:
             ctx = json.loads(context) if context else None
@@ -205,14 +201,26 @@ async def coda_run_task(
                 "error": f"Invalid JSON in context parameter: {context!r}",
             })
 
+        # Auto-create ephemeral session
+        session_result = task_manager.create_session(email, "", label="hermes-mcp")
+        session_id = session_result["session_id"]
+
+        # Create PTY if hooks are wired
+        if _app_create_session is not None:
+            pty_session_id = _app_create_session(label="hermes-mcp")
+            task_manager._update_session_field(
+                session_id, "pty_session_id", pty_session_id
+            )
+
+        # Create task with chaining support
         result = task_manager.create_task(
             session_id=session_id,
             prompt=prompt,
             email=email,
             context=ctx,
-            context_hint=context_hint or None,
             timeout_s=timeout_s,
             permissions=permissions,
+            previous_session_id=previous_session_id or None,
         )
         task_id = result["task_id"]
 
@@ -239,12 +247,12 @@ async def coda_run_task(
                 )
                 t.start()
 
-        return json.dumps(result)
+        return json.dumps({
+            "task_id": task_id,
+            "session_id": session_id,
+            "status": "running",
+        })
 
-    except task_manager.SessionBusyError as exc:
-        return json.dumps({"status": "error", "error": str(exc)})
-    except task_manager.SessionNotFoundError as exc:
-        return json.dumps({"status": "error", "error": str(exc)})
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)})
 
@@ -256,32 +264,45 @@ async def coda_run_task(
         idempotentHint=True,
     ),
 )
-async def coda_get_status(
-    task_id: str,
-    session_id: str,
+async def coda_inbox(
+    email: str = "",
+    status: str = "",
 ) -> str:
-    """Poll task progress after coda_run_task.
+    """Check status of all background tasks — your inbox.
 
-    Polling strategy: start at 10s intervals. After 20 polls without completion,
-    exponentially back off: 20s, 40s, 80s, up to 5 minutes max between polls.
+    Call this instead of polling — it returns ALL tasks at once.
+    No need to track individual task_ids; the inbox shows everything
+    from the last 24 hours: running, completed, and failed tasks.
 
-    Returns JSON with ``task_id``, ``status``, ``elapsed_s``, and
-    optional ``progress`` (latest step from the agent).
+    By default returns all tasks. Filter by ``status`` to narrow:
+    ``"running"`` for in-progress only, ``"completed"`` for finished,
+    ``"failed"`` for errors, or ``""`` (default) for everything.
 
-    Status values: "running", "completed", "failed", "timeout".
-    When status is "completed" or "failed", stop polling and call coda_get_result.
+    Each task includes: ``task_id``, ``session_id``, ``status``,
+    ``elapsed_s``, ``prompt_summary`` (first 100 chars of what was asked),
+    ``previous_session_id`` (if chained from prior work).
+    Completed tasks also include ``summary`` (what was done).
+    Running tasks also include ``progress`` (latest agent step).
+
+    Returns JSON with ``tasks`` (list sorted most recent first)
+    and ``counts`` (e.g. ``{"running": 1, "completed": 2, "failed": 0}``).
     """
     try:
-        status = task_manager.get_task_status(task_id, session_id)
-        status["task_id"] = task_id
+        tasks = task_manager.list_all_tasks(email=email, status_filter=status)
 
-        # Add elapsed time if we have a timestamp
-        if "ts" in status:
-            status["elapsed_s"] = round(time.time() - status["ts"], 1)
+        counts = {"running": 0, "completed": 0, "failed": 0}
+        for t in tasks:
+            s = t.get("status", "")
+            if s in counts:
+                counts[s] += 1
+            elif s == "done":
+                counts["completed"] += 1
+            elif s == "timeout":
+                counts["failed"] += 1
 
-        return json.dumps(status)
+        return json.dumps({"tasks": tasks, "counts": counts})
     except Exception as exc:
-        return json.dumps({"status": "error", "task_id": task_id, "error": str(exc)})
+        return json.dumps({"status": "error", "error": str(exc)})
 
 
 @mcp.tool(
@@ -297,11 +318,11 @@ async def coda_get_result(
 ) -> str:
     """Retrieve the structured result of a completed task.
 
-    Call this AFTER coda_get_status returns "completed" or "failed".
+    Call this AFTER coda_inbox shows a task as "completed" or "failed".
 
-    Returns JSON with ``task_id``, ``status``, ``summary`` (what was done),
-    ``files_changed`` (list of modified files), ``artifacts`` (job IDs,
-    commit hashes, etc.), and ``errors`` (if any).
+    Returns JSON with ``task_id``, ``session_id``, ``status``, ``summary``
+    (what was done), ``files_changed`` (list of modified files),
+    ``artifacts`` (job IDs, commit hashes, etc.), and ``errors`` (if any).
     """
     try:
         result = task_manager.get_task_result(task_id, session_id)
@@ -310,11 +331,13 @@ async def coda_get_result(
             status = task_manager.get_task_status(task_id, session_id)
             return json.dumps({
                 "task_id": task_id,
+                "session_id": session_id,
                 "status": status.get("status", "unknown"),
                 "message": "Result not yet available — task is still in progress.",
             })
 
         result["task_id"] = task_id
+        result["session_id"] = session_id
         # Ensure standard fields exist
         result.setdefault("status", "done")
         result.setdefault("summary", "")
@@ -324,39 +347,6 @@ async def coda_get_result(
         return json.dumps(result)
     except Exception as exc:
         return json.dumps({"status": "error", "task_id": task_id, "error": str(exc)})
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-    ),
-)
-async def coda_close_session(
-    session_id: str,
-) -> str:
-    """Close session and clean up.
-
-    Returns JSON with ``session_id`` and ``status``.
-    """
-    try:
-        # Close PTY if hooks are wired
-        if _app_close_session is not None:
-            try:
-                session = task_manager._read_session(session_id)
-                pty_session_id = session.get("pty_session_id")
-                if pty_session_id:
-                    _app_close_session(pty_session_id)
-            except task_manager.SessionNotFoundError:
-                pass  # session already gone — still try disk close below
-
-        task_manager.close_session(session_id)
-        return json.dumps({"session_id": session_id, "status": "closed"})
-    except task_manager.SessionNotFoundError as exc:
-        return json.dumps({"status": "error", "session_id": session_id, "error": str(exc)})
-    except Exception as exc:
-        return json.dumps({"status": "error", "session_id": session_id, "error": str(exc)})
 
 
 # ── Standalone entry point ──────────────────────────────────────────

@@ -19,20 +19,16 @@ mcp_bp = Blueprint("mcp", __name__)
 # Import tool functions from mcp_server.py
 from mcp_server import (
     mcp as mcp_instance,
-    coda_create_session,
-    coda_run_task,
-    coda_get_status,
+    coda_run,
+    coda_inbox,
     coda_get_result,
-    coda_close_session,
 )
 
 # Tool function dispatch
 _TOOL_DISPATCH = {
-    "coda_create_session": coda_create_session,
-    "coda_run_task": coda_run_task,
-    "coda_get_status": coda_get_status,
+    "coda_run": coda_run,
+    "coda_inbox": coda_inbox,
     "coda_get_result": coda_get_result,
-    "coda_close_session": coda_close_session,
 }
 
 SERVER_INFO = {
