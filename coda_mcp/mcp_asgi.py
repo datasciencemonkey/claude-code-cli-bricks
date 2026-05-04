@@ -27,7 +27,11 @@ from utils import ensure_https
 
 logger = logging.getLogger(__name__)
 
-# ── Build allowed origins from DATABRICKS_HOST ─────────────────────
+# ── Build allowed origins ─────────────────────────────────────────
+# The browser connects from the app's own URL (e.g. mcp-test-coda-*.databricksapps.com)
+# which differs from DATABRICKS_HOST (workspace URL). Databricks proxy handles auth,
+# so Socket.IO CORS can safely allow all origins. Starlette CORSMiddleware below
+# uses the same list for MCP/Flask routes.
 _databricks_host = os.environ.get("DATABRICKS_HOST", "")
 ALLOWED_ORIGINS = []
 if _databricks_host:
@@ -57,7 +61,7 @@ set_app_hooks(
 # eliminating the WSGIMiddleware limitation that forced HTTP polling fallback.
 sio = socketio_lib.AsyncServer(
     async_mode='asgi',
-    cors_allowed_origins=ALLOWED_ORIGINS or ['*'],
+    cors_allowed_origins='*',  # App URL differs from DATABRICKS_HOST; proxy handles auth
     logger=False,
     engineio_logger=False,
 )
