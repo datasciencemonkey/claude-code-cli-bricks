@@ -234,6 +234,81 @@ This template repo opens that vision up for every Databricks user — no IDE set
                                       └─────────────────────┘
 ```
 
+### CoDA MCP Flow
+
+How external MCP clients delegate coding tasks to CoDA's agent fleet:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           MCP Clients (upstream)                           │
+│                                                                            │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌────────────┐  │
+│  │ Claude Code  │   │   VS Code    │   │  Genie Code  │   │   Hermes   │  │
+│  │   (CLI)      │   │  (Copilot)   │   │ (Databricks) │   │   (CLI)    │  │
+│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └─────┬──────┘  │
+│         │                  │                   │                 │         │
+│         │  MCP JSON-RPC    │  MCP JSON-RPC     │  MCP JSON-RPC  │         │
+│         │  over stdio      │  over stdio       │  over HTTP     │         │
+└─────────┼──────────────────┼───────────────────┼────────────────┼─────────┘
+          │                  │                   │                │
+          ▼                  ▼                   │                │
+┌─────────────────────────────────┐              │                │
+│        coda-bridge.py           │              │                │
+│   (stdio → HTTP MCP proxy)      │              │                │
+│                                 │              │                │
+│  • Reads JSON-RPC from stdin    │              │                │
+│  • Injects OAuth token via      │              │                │
+│    `databricks auth token`      │              │                │
+│  • Forwards as HTTP POST        │              │                │
+│  • Returns response to stdout   │              │                │
+└────────────────┬────────────────┘              │                │
+                 │                               │                │
+                 │  HTTP POST + Bearer token     │                │
+                 │  Mcp-Session-Id header        │                │
+                 ▼                               ▼                ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CoDA MCP Server (Databricks App)                         │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                     MCP Tool Interface                               │   │
+│  │                                                                      │   │
+│  │  coda_run(prompt, ...)        → Submit task, returns task_id         │   │
+│  │  coda_inbox()                 → List tasks from last 24h            │   │
+│  │  coda_get_result(task_id)     → Get full output of completed task   │   │
+│  └──────────────────────────┬───────────────────────────────────────────┘   │
+│                             │                                              │
+│                             ▼                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                      Hermes Agent (orchestrator)                     │   │
+│  │                                                                      │   │
+│  │  • Receives task from coda_run                                      │   │
+│  │  • Runs autonomously in background                                  │   │
+│  │  • Can delegate to sub-agents for complex work                      │   │
+│  │  • Has access to MCP servers (DeepWiki, Exa)                        │   │
+│  │  • Auth: short-lived PAT → Model Serving / AI Gateway               │   │
+│  └──────┬──────────────────────┬──────────────────────┬────────────────┘   │
+│         │                      │                      │                    │
+│         ▼                      ▼                      ▼                    │
+│  ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐           │
+│  │  Claude Code  │   │  Codex / Gemini  │   │ OpenCode / other │           │
+│  │  (sub-agent)  │   │   (sub-agents)   │   │   (sub-agents)   │           │
+│  └──────────────┘   └──────────────────┘   └──────────────────┘           │
+│         │                      │                      │                    │
+│         └──────────────────────┼──────────────────────┘                    │
+│                                ▼                                           │
+│                  ┌──────────────────────────┐                              │
+│                  │   Databricks Workspace   │                              │
+│                  │                          │                              │
+│                  │  • Unity Catalog         │                              │
+│                  │  • Model Serving         │                              │
+│                  │  • Workspace files       │                              │
+│                  │  • Jobs / Clusters       │                              │
+│                  └──────────────────────────┘                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Flow:** Client calls `coda_run` → `coda-bridge.py` injects OAuth and proxies over HTTP → CoDA MCP Server returns `task_id` immediately (fire-and-forget) → Hermes Agent runs the task autonomously, spawning sub-agents as needed → Client checks results later via `coda_inbox` / `coda_get_result`.
+
 ### Startup Flow
 
 1. Gunicorn starts, calls `initialize_app()` via `post_worker_init` hook
