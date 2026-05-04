@@ -247,22 +247,38 @@ Genie Code calls coda_get_result(task_id="task-abc", session_id="sess-123")
 → {summary: "Created pipeline.py with 3 stages", files_changed: ["pipeline.py"], ...}
 ```
 
-#### Example: Any MCP Client (Claude Desktop, Cursor, custom apps)
+#### Connecting MCP Clients (Claude Code, Claude Desktop, Cursor, etc.)
 
-Point any MCP client at your deployed app's `/mcp` endpoint:
+Databricks Apps use OAuth — not PATs — for authentication. A static `Authorization: Bearer <PAT>` header will get a `302` redirect to the OAuth login page. To connect any MCP client, use the **stdio bridge** (`tools/coda-bridge.py`) which injects fresh OAuth tokens automatically via `databricks auth token`.
+
+**1. Copy the bridge script:**
+
+```bash
+mkdir -p ~/.claude/mcp-bridges
+cp tools/coda-bridge.py ~/.claude/mcp-bridges/
+```
+
+**2. Add to your MCP client settings** (e.g. `~/.claude/settings.json`):
 
 ```json
-{
-  "mcpServers": {
-    "coda": {
-      "type": "http",
-      "url": "https://your-app.databricksapps.com/mcp"
+"coda-mcp": {
+    "type": "stdio",
+    "command": "python3",
+    "args": ["/path/to/.claude/mcp-bridges/coda-bridge.py"],
+    "env": {
+        "CODA_MCP_URL": "https://your-app.databricksapps.com/mcp",
+        "DATABRICKS_PROFILE": "your-profile"
     }
-  }
 }
 ```
 
-Then use natural language: *"Use CoDA to create a dashboard for my sales data"* — the client calls `coda_run`, checks `coda_inbox`, and retrieves results via `coda_get_result`.
+**3. Restart your MCP client.**
+
+The bridge reads `CODA_MCP_URL` and `DATABRICKS_PROFILE` from environment — no hardcoded values. If you redeploy the app or switch workspaces, just update the `env` block.
+
+**Prerequisites:** `databricks` CLI installed and authenticated (`databricks auth login -p <profile>`), Python 3.8+, no pip dependencies.
+
+**Troubleshooting:** Bridge logs go to stderr. If you see `Auth failed (302)`, refresh your CLI session with `databricks auth login -p <profile>`. See [full setup guide](docs/mcp-client-setup.md) for details.
 
 #### Task Chaining
 
@@ -418,8 +434,11 @@ coding-agents-databricks-apps/
 │   └── workflows/
 │       ├── dependency-audit.yml # Weekly CVE audit + lockfile drift check
 │       └── update-lockfile.yml  # Auto-regenerate requirements.lock on push
+├── tools/
+│   └── coda-bridge.py           # Stdio-to-HTTP MCP bridge (OAuth token injection)
 └── docs/
     ├── deployment.md            # Full Databricks Apps deployment guide
+    ├── mcp-client-setup.md      # MCP client setup guide (bridge config)
     ├── mcp-v2-background-execution.md  # MCP server design doc
     ├── prd/                     # Product requirement documents
     └── plans/                   # Design documentation
