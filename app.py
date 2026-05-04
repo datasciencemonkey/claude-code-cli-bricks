@@ -1,3 +1,4 @@
+import asyncio
 import os
 import pty
 import fcntl
@@ -57,7 +58,45 @@ app.secret_key = os.urandom(24)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB — aligned with Claude Code's 30 MB file limit
 
 # WebSocket support via Flask-SocketIO (simple-websocket transport, threading mode)
+# Used for local dev (python app.py). Under uvicorn/ASGI, the AsyncServer in
+# mcp_asgi.py intercepts /socket.io/ before WSGIMiddleware, so these handlers
+# are only active in WSGI mode.
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[], logger=False, engineio_logger=False)
+
+# ── ASGI WebSocket support (python-socketio AsyncServer) ─────────────
+# Set by mcp_asgi.py at startup. Background threads use _emit_from_thread()
+# which routes to the async server (ASGI) or Flask-SocketIO (WSGI) automatically.
+_async_sio = None
+_event_loop = None
+
+
+def set_async_sio(sio_instance, loop):
+    """Called by mcp_asgi.py to wire up the ASGI Socket.IO server."""
+    global _async_sio, _event_loop
+    _async_sio = sio_instance
+    _event_loop = loop
+
+
+def _emit_from_thread(event, data, room=None):
+    """Thread-safe emit for background threads (PTY reader, cleanup, SIGTERM).
+
+    Routes to AsyncServer (ASGI mode) or Flask-SocketIO (WSGI mode) automatically.
+    """
+    if _async_sio and _event_loop and _event_loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _async_sio.emit(event, data, room=room),
+                _event_loop,
+            )
+        except Exception:
+            pass
+    else:
+        # WSGI mode (local dev) — use Flask-SocketIO directly
+        try:
+            socketio.emit(event, data, room=room)
+        except Exception:
+            pass
+
 
 # Store sessions: {session_id: {"master_fd": fd, "pid": pid, "output_buffer": deque, "lock": Lock, ...}}
 # sessions_lock guards dict-level ops (add/remove/iterate); each session["lock"] guards per-session state
@@ -85,10 +124,7 @@ def handle_sigterm(signum, frame):
     shutting_down = True
     logger.info("SIGTERM received — setting shutting_down flag for clients")
     # Notify WS clients immediately (HTTP poll clients will see shutting_down on next poll)
-    try:
-        socketio.emit('shutting_down', {})
-    except Exception:
-        pass
+    _emit_from_thread('shutting_down', {})
 
 # NOTE: Do not register SIGTERM handler at module level.
 # It is installed in initialize_app() for gunicorn only.
@@ -538,7 +574,125 @@ def _check_ws_authorization():
     return True
 
 
-# ── WebSocket Event Handlers ──────────────────────────────────────────────
+def _check_ws_authorization_from_environ(environ):
+    """Check authorization from WSGI environ dict (for ASGI WebSocket via python-socketio).
+
+    Same logic as _check_ws_authorization() but reads headers from the environ
+    dict instead of Flask's request context. WSGI environ stores HTTP headers as
+    HTTP_X_FORWARDED_EMAIL (uppercase, underscores, HTTP_ prefix).
+    """
+    if not app_owner:
+        if _is_databricks_apps():
+            logger.error("SECURITY: app_owner not resolved — denying WebSocket (fail-closed)")
+            return False
+        return True  # Local dev only
+
+    raw_user = (
+        environ.get("HTTP_X_FORWARDED_EMAIL")
+        or environ.get("HTTP_X_FORWARDED_USER")
+        or environ.get("HTTP_X_DATABRICKS_USER_EMAIL")
+    )
+    current_user = raw_user.lower() if raw_user else raw_user
+
+    if not current_user:
+        if _is_databricks_apps():
+            logger.warning("No user identity in WebSocket request on Databricks Apps — denying")
+            return False
+        return True  # Local dev only
+
+    if current_user != app_owner:
+        logger.warning(f"WebSocket unauthorized: {current_user} (owner: {app_owner})")
+        return False
+    return True
+
+
+def register_sio_handlers(sio):
+    """Register Socket.IO event handlers on an AsyncServer for ASGI mode.
+
+    Called by mcp_asgi.py. The handlers mirror the Flask-SocketIO handlers below
+    but use python-socketio's async API (explicit sid, enter_room/leave_room,
+    async def, ConnectionRefusedError for auth denial).
+    """
+
+    @sio.on('connect')
+    async def handle_connect(sid, environ, auth):
+        # Capture event loop on first connection for _emit_from_thread()
+        set_async_sio(sio, asyncio.get_running_loop())
+
+        if not _check_ws_authorization_from_environ(environ):
+            raise ConnectionRefusedError('unauthorized')
+        logger.info("WebSocket client connected (ASGI)")
+
+    @sio.on('join_session')
+    async def handle_join_session(sid, data):
+        session_id = data.get('session_id')
+        if not session_id:
+            return {'status': 'error', 'message': 'session_id required'}
+        sess = _get_session(session_id)
+        if not sess:
+            return {'status': 'error', 'message': 'Session not found'}
+        with sess["lock"]:
+            sess["last_poll_time"] = time.time()
+            sess["output_buffer"].clear()
+        sio.enter_room(sid, session_id)
+        logger.info(f"WebSocket client joined session room {session_id}")
+        return {'status': 'ok'}
+
+    @sio.on('leave_session')
+    async def handle_leave_session(sid, data):
+        session_id = data.get('session_id')
+        if session_id:
+            sio.leave_room(sid, session_id)
+            logger.info(f"WebSocket client left session room {session_id}")
+
+    @sio.on('terminal_input')
+    async def handle_terminal_input(sid, data):
+        session_id = data.get('session_id')
+        input_data = data.get('input', '')
+        sess = _get_session(session_id)
+        if not sess:
+            return
+        with sess["lock"]:
+            sess["last_poll_time"] = time.time()
+        fd = sess["master_fd"]
+        try:
+            os.write(fd, input_data.encode())
+        except OSError as e:
+            logger.warning(f"WebSocket input write error for {session_id}: {e}")
+
+    @sio.on('terminal_resize')
+    async def handle_terminal_resize(sid, data):
+        session_id = data.get('session_id')
+        cols = data.get('cols', 80)
+        rows = data.get('rows', 24)
+        sess = _get_session(session_id)
+        if not sess:
+            return
+        with sess["lock"]:
+            sess["last_poll_time"] = time.time()
+        fd = sess["master_fd"]
+        try:
+            winsize = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+        except OSError as e:
+            logger.warning(f"WebSocket resize error for {session_id}: {e}")
+
+    @sio.on('heartbeat')
+    async def handle_heartbeat(sid, data):
+        session_ids = data.get('session_ids', [])
+        now = time.time()
+        for s_id in session_ids:
+            sess = _get_session(s_id)
+            if sess:
+                with sess["lock"]:
+                    sess["last_poll_time"] = now
+
+    @sio.on('disconnect')
+    async def handle_disconnect(sid):
+        logger.info("WebSocket client disconnected (ASGI)")
+
+
+# ── WebSocket Event Handlers (Flask-SocketIO — WSGI/local dev only) ──────
 
 @socketio.on('connect')
 def handle_ws_connect():
@@ -669,12 +823,9 @@ def read_pty_output(session_id, fd):
                     session["output_buffer"].append(decoded)
                     session["last_poll_time"] = time.time()  # Keep session alive during WS output
                 # Push via WebSocket to the session room (AC-8)
-                try:
-                    socketio.emit('terminal_output',
+                _emit_from_thread('terminal_output',
                                   {'session_id': session_id, 'output': decoded},
                                   room=session_id)
-                except Exception:
-                    pass  # No WebSocket clients — HTTP polling handles it
             else:
                 # select timed out — check if process is still alive
                 try:
@@ -689,10 +840,7 @@ def read_pty_output(session_id, fd):
             break
 
     # Process exited or fd closed — notify WebSocket clients (AC-9)
-    try:
-        socketio.emit('session_exited', {'session_id': session_id}, room=session_id)
-    except Exception:
-        pass
+    _emit_from_thread('session_exited', {'session_id': session_id}, room=session_id)
 
     logger.info(f"Session {session_id} process exited")
 
@@ -706,10 +854,7 @@ def terminate_session(session_id, pid, master_fd):
     logger.info(f"Terminating stale session {session_id} (pid={pid})")
 
     # Notify WebSocket clients that the session is closed
-    try:
-        socketio.emit('session_closed', {'session_id': session_id}, room=session_id)
-    except Exception:
-        pass
+    _emit_from_thread('session_closed', {'session_id': session_id}, room=session_id)
 
     try:
         os.kill(pid, signal.SIGHUP)

@@ -1,22 +1,21 @@
-"""Native MCP ASGI app following Databricks Genie Code requirements exactly.
+"""Native MCP ASGI app with WebSocket support for terminal I/O.
 
-Per docs: https://docs.databricks.com/aws/en/genie-code/mcp
-- MCP server at /mcp
-- stateless_http=True
-- CORSMiddleware with workspace origin
+Architecture (all on one port, one uvicorn process):
 
-Also mounts Flask at all other paths via WSGIMiddleware for the terminal UI.
-WebSocket will fall back to HTTP polling under ASGI — this is expected and works.
+    socketio.ASGIApp          ← /socket.io/  → native ASGI WebSocket (terminal)
+        └── mcp_starlette     ← /mcp         → FastMCP Streamable HTTP (Genie Code)
+                └── WSGI(Flask) ← /*          → REST API, static files (HTTP only)
 
 Usage in app.yaml::
 
-    command: ["uvicorn", "mcp_asgi:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "coda_mcp.mcp_asgi:app", "--host", "0.0.0.0", "--port", "8000"]
 """
 
 import os
 import logging
 import warnings
 
+import socketio as socketio_lib
 from starlette.middleware.cors import CORSMiddleware
 
 with warnings.catch_warnings():
@@ -41,6 +40,7 @@ from app import (
     mcp_create_pty_session,
     mcp_send_input,
     mcp_close_pty_session,
+    register_sio_handlers,
 )
 
 initialize_app()
@@ -52,16 +52,27 @@ set_app_hooks(
     close_session_fn=mcp_close_pty_session,
 )
 
+# ── Async Socket.IO server (native ASGI WebSocket) ───────────────
+# python-socketio AsyncServer handles /socket.io/ with real WebSocket,
+# eliminating the WSGIMiddleware limitation that forced HTTP polling fallback.
+sio = socketio_lib.AsyncServer(
+    async_mode='asgi',
+    cors_allowed_origins=ALLOWED_ORIGINS or ['*'],
+    logger=False,
+    engineio_logger=False,
+)
+
+# Register terminal I/O event handlers (connect, join_session, terminal_input, etc.)
+register_sio_handlers(sio)
+
 # ── Build the ASGI app per Genie Code docs ─────────────────────────
-# "mcp_app = mcp_server.http_app(stateless_http=True)"
-# stateless_http and json_response are already set on the FastMCP instance
 mcp_starlette = mcp_instance.streamable_http_app()
 
-# Mount Flask as catch-all via WSGI adapter
+# Mount Flask as catch-all via WSGI adapter (HTTP routes only)
 flask_asgi = WSGIMiddleware(flask_app.wsgi_app)
 mcp_starlette.mount("/", app=flask_asgi)
 
-# "app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, ...)"
+# CORS for MCP and Flask routes
 mcp_starlette.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS or ["*"],
@@ -70,4 +81,7 @@ mcp_starlette.add_middleware(
     allow_headers=["*"],
 )
 
-app = mcp_starlette
+# ── Top-level ASGI app ────────────────────────────────────────────
+# socketio.ASGIApp intercepts /socket.io/ for WebSocket + polling,
+# passes everything else to mcp_starlette (MCP at /mcp, Flask at /)
+app = socketio_lib.ASGIApp(sio, other_app=mcp_starlette)
