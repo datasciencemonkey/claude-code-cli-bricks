@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 mcp_bp = Blueprint("mcp", __name__)
 
 # Import tool functions from mcp_server.py
-from mcp_server import (
+from coda_mcp.mcp_server import (
     mcp as mcp_instance,
     coda_run,
     coda_inbox,

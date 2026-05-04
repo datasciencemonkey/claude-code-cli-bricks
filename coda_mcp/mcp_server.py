@@ -23,7 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-import task_manager
+from coda_mcp import task_manager
 
 logger = logging.getLogger(__name__)
 

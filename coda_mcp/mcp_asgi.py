@@ -23,7 +23,7 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     from starlette.middleware.wsgi import WSGIMiddleware
 
-from mcp_server import mcp as mcp_instance, set_app_hooks
+from coda_mcp.mcp_server import mcp as mcp_instance, set_app_hooks
 from utils import ensure_https
 
 logger = logging.getLogger(__name__)

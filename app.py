@@ -1393,8 +1393,8 @@ def initialize_app(local_dev=False):
 
 
 # ── MCP Endpoint ─────────────────────────────────────────────────────
-from mcp_endpoint import mcp_bp
-from mcp_server import set_app_hooks
+from coda_mcp.mcp_endpoint import mcp_bp
+from coda_mcp.mcp_server import set_app_hooks
 
 app.register_blueprint(mcp_bp)
 

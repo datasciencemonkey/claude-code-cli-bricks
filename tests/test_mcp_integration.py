@@ -26,8 +26,8 @@ def _parse(result: str) -> dict:
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path):
     """Redirect state to tmp and mock PTY hooks."""
-    import task_manager as tm
-    import mcp_server as ms
+    from coda_mcp import task_manager as tm
+    from coda_mcp import mcp_server as ms
 
     original_dir = tm.SESSIONS_DIR
     tm.SESSIONS_DIR = str(tmp_path / "sessions")
@@ -53,14 +53,14 @@ class TestFullMcpFlow:
     @pytest.mark.asyncio
     async def test_full_background_flow(self, isolated_env):
         """Happy path: run (fire-and-forget) → inbox → result."""
-        import mcp_server as ms
-        import task_manager as tm
+        from coda_mcp import mcp_server as ms
+        from coda_mcp import task_manager as tm
 
         # Step 1: submit task (returns immediately)
         with MagicMock() as mock_thread:
-            import mcp_server
+            from coda_mcp import mcp_server
             with pytest.MonkeyPatch.context() as mp:
-                mp.setattr("mcp_server.threading", mock_thread)
+                mp.setattr("coda_mcp.mcp_server.threading", mock_thread)
                 raw = await ms.coda_run(
                     prompt="create a sales pipeline",
                     email="alice@test.com",
@@ -124,8 +124,8 @@ class TestTaskChaining:
     @pytest.mark.asyncio
     async def test_chained_task_references_prior_session(self, isolated_env):
         """A chained task includes prior session context in prompt."""
-        import mcp_server as ms
-        import task_manager as tm
+        from coda_mcp import mcp_server as ms
+        from coda_mcp import task_manager as tm
 
         # First task
         raw = await ms.coda_run(
@@ -187,10 +187,10 @@ class TestConcurrencyLimit:
     @pytest.mark.asyncio
     async def test_exceeding_limit_returns_error(self, isolated_env):
         """Exceeding MAX_CONCURRENT_TASKS returns a clear error."""
-        import mcp_server as ms
+        from coda_mcp import mcp_server as ms
         from unittest.mock import patch
 
-        with patch("task_manager.MAX_CONCURRENT_TASKS", 1):
+        with patch("coda_mcp.task_manager.MAX_CONCURRENT_TASKS", 1):
             r1 = await ms.coda_run(prompt="task1", email="a@b.com")
             assert _parse(r1)["status"] == "running"
 
@@ -207,14 +207,14 @@ class TestYoloPermissions:
     @pytest.mark.asyncio
     async def test_yolo_permissions(self, isolated_env):
         """permissions='yolo' causes the PTY command to include --yolo."""
-        import mcp_server as ms
+        from coda_mcp import mcp_server as ms
 
         mock_send = isolated_env["mock_send"]
 
         with MagicMock() as mock_thread:
-            import mcp_server
+            from coda_mcp import mcp_server
             with pytest.MonkeyPatch.context() as mp:
-                mp.setattr("mcp_server.threading", mock_thread)
+                mp.setattr("coda_mcp.mcp_server.threading", mock_thread)
                 await ms.coda_run(
                     prompt="deploy everything",
                     email="dave@test.com",
@@ -233,8 +233,8 @@ class TestAutoClose:
     @pytest.mark.asyncio
     async def test_session_auto_closes(self, isolated_env):
         """Session is auto-closed when task completes."""
-        import mcp_server as ms
-        import task_manager as tm
+        from coda_mcp import mcp_server as ms
+        from coda_mcp import task_manager as tm
 
         raw = await ms.coda_run(prompt="quick job", email="a@b.com")
         d = _parse(raw)
@@ -262,8 +262,8 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_removes_expired(self, isolated_env):
         """cleanup_expired_tasks removes old closed sessions."""
-        import mcp_server as ms
-        import task_manager as tm
+        from coda_mcp import mcp_server as ms
+        from coda_mcp import task_manager as tm
         from unittest.mock import patch
 
         raw = await ms.coda_run(prompt="old task", email="a@b.com")

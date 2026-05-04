@@ -12,7 +12,7 @@ import pytest
 def isolated_sessions(tmp_path):
     """Point task_manager.SESSIONS_DIR at a temp dir."""
     sessions_dir = str(tmp_path / ".coda" / "sessions")
-    with mock.patch("task_manager.SESSIONS_DIR", sessions_dir):
+    with mock.patch("coda_mcp.task_manager.SESSIONS_DIR", sessions_dir):
         yield sessions_dir
 
 
@@ -44,7 +44,7 @@ def _read_jsonl(path):
 
 class TestCreateSession:
     def test_returns_session_id_and_status(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         result = task_manager.create_session("a@b.com", "u1", "my-label")
         assert result["status"] == "ready"
@@ -52,7 +52,7 @@ class TestCreateSession:
         assert len(result["session_id"]) == 5 + 12  # "sess-" + 12 hex
 
     def test_creates_session_json_on_disk(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         result = task_manager.create_session("a@b.com", "u1", "my-label")
         sid = result["session_id"]
@@ -68,7 +68,7 @@ class TestCreateSession:
         assert "created_at" in data
 
     def test_unique_ids(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         ids = {task_manager.create_session("a@b.com", "u1")["session_id"] for _ in range(20)}
         assert len(ids) == 20
@@ -76,7 +76,7 @@ class TestCreateSession:
 
 class TestCloseSession:
     def test_marks_session_closed(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         task_manager.close_session(sid)
@@ -84,7 +84,7 @@ class TestCloseSession:
         assert data["status"] == "closed"
 
     def test_close_nonexistent_raises(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         with pytest.raises(task_manager.SessionNotFoundError):
             task_manager.close_session("sess-doesnotexist")
@@ -92,14 +92,14 @@ class TestCloseSession:
 
 class TestReadSession:
     def test_read_existing(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1", "lbl")["session_id"]
         data = task_manager._read_session(sid)
         assert data["email"] == "a@b.com"
 
     def test_read_nonexistent_raises(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         with pytest.raises(task_manager.SessionNotFoundError):
             task_manager._read_session("sess-000000000000")
@@ -107,7 +107,7 @@ class TestReadSession:
 
 class TestUpdateSessionField:
     def test_updates_single_field(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         task_manager._update_session_field(sid, "status", "busy")
@@ -115,7 +115,7 @@ class TestUpdateSessionField:
         assert data["status"] == "busy"
 
     def test_preserves_other_fields(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1", "lbl")["session_id"]
         task_manager._update_session_field(sid, "status", "busy")
@@ -129,7 +129,7 @@ class TestUpdateSessionField:
 
 class TestCreateTask:
     def test_returns_task_id_and_running(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         result = task_manager.create_task(sid, "do something", "a@b.com")
@@ -138,7 +138,7 @@ class TestCreateTask:
         assert len(result["task_id"]) == 5 + 8  # "task-" + 8 hex
 
     def test_creates_task_directory_with_files(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "do something", "a@b.com")["task_id"]
@@ -148,7 +148,7 @@ class TestCreateTask:
         assert os.path.isfile(os.path.join(task_dir, "status.jsonl"))
 
     def test_prompt_txt_contains_wrapped_prompt(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "fix the bug", "a@b.com")["task_id"]
@@ -157,7 +157,7 @@ class TestCreateTask:
         assert "fix the bug" in prompt
 
     def test_session_marked_busy(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         task_manager.create_task(sid, "do it", "a@b.com")
@@ -165,7 +165,7 @@ class TestCreateTask:
         assert data["status"] == "busy"
 
     def test_session_current_task_set(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "do it", "a@b.com")["task_id"]
@@ -173,7 +173,7 @@ class TestCreateTask:
         assert data["current_task"] == tid
 
     def test_busy_session_raises(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         task_manager.create_task(sid, "first", "a@b.com")
@@ -181,13 +181,13 @@ class TestCreateTask:
             task_manager.create_task(sid, "second", "a@b.com")
 
     def test_nonexistent_session_raises(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         with pytest.raises(task_manager.SessionNotFoundError):
             task_manager.create_task("sess-doesnotexist", "p", "e@x.com")
 
     def test_status_jsonl_has_initial_entry(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -198,7 +198,7 @@ class TestCreateTask:
         assert entries[0]["status"] == "running"
 
     def test_optional_params_stored(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(
@@ -215,7 +215,7 @@ class TestCreateTask:
 
 class TestTaskDir:
     def test_returns_correct_path(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         path = task_manager._task_dir("sess-aabbccddee01", "task-11223344")
         expected = os.path.join(
@@ -229,7 +229,7 @@ class TestTaskDir:
 
 class TestGetTaskStatus:
     def test_returns_latest_status(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -237,7 +237,7 @@ class TestGetTaskStatus:
         assert status["status"] == "running"
 
     def test_reads_appended_lines(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -250,7 +250,7 @@ class TestGetTaskStatus:
         assert status["pct"] == 50
 
     def test_missing_task_returns_not_found(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         status = task_manager.get_task_status("task-nonexist", sid)
@@ -259,7 +259,7 @@ class TestGetTaskStatus:
 
 class TestGetTaskResult:
     def test_returns_result_when_present(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -271,7 +271,7 @@ class TestGetTaskResult:
         assert result["answer"] == 42
 
     def test_returns_none_when_absent(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -279,7 +279,7 @@ class TestGetTaskResult:
         assert result is None
 
     def test_missing_task_returns_none(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         result = task_manager.get_task_result("task-nonexist", sid)
@@ -292,7 +292,7 @@ class TestGetTaskResult:
 class TestCompleteTask:
     def test_marks_session_closed(self, isolated_sessions):
         """v2: sessions are ephemeral — complete_task auto-closes the session."""
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -302,7 +302,7 @@ class TestCompleteTask:
         assert "closed_at" in data
 
     def test_appends_to_completed_tasks(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -312,7 +312,7 @@ class TestCompleteTask:
 
     def test_closed_session_rejects_new_task(self, isolated_sessions):
         """v2: ephemeral sessions — new tasks need new sessions."""
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid1 = task_manager.create_task(sid, "first", "a@b.com")["task_id"]
@@ -321,7 +321,7 @@ class TestCompleteTask:
             task_manager.create_task(sid, "second", "a@b.com")
 
     def test_appends_done_to_status_jsonl(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         tid = task_manager.create_task(sid, "go", "a@b.com")["task_id"]
@@ -332,7 +332,7 @@ class TestCompleteTask:
         assert entries[-1]["status"] == "done"
 
     def test_nonexistent_session_raises(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         with pytest.raises(task_manager.SessionNotFoundError):
             task_manager.complete_task("sess-doesnotexist", "task-00000000")
@@ -343,7 +343,7 @@ class TestCompleteTask:
 
 class TestWrapPrompt:
     def test_contains_marker(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         wrapped = task_manager.wrap_prompt(
             task_id="task-aabbccdd",
@@ -362,7 +362,7 @@ class TestWrapPrompt:
         assert "/tmp/r" in wrapped
 
     def test_includes_context_when_provided(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         wrapped = task_manager.wrap_prompt(
             task_id="task-aabbccdd",
@@ -377,7 +377,7 @@ class TestWrapPrompt:
         assert "main" in wrapped
 
     def test_includes_context_hint(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         wrapped = task_manager.wrap_prompt(
             task_id="task-aabbccdd",
@@ -391,7 +391,7 @@ class TestWrapPrompt:
         assert "look at utils.py first" in wrapped
 
     def test_no_context_still_valid(self):
-        import task_manager
+        from coda_mcp import task_manager
 
         wrapped = task_manager.wrap_prompt(
             task_id="task-aabbccdd",
@@ -411,7 +411,7 @@ class TestWrapPrompt:
 
 class TestEdgeCases:
     def test_closed_session_rejects_task(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         task_manager.close_session(sid)
@@ -420,7 +420,7 @@ class TestEdgeCases:
 
     def test_multiple_tasks_across_sessions(self, isolated_sessions):
         """v2: each task gets its own ephemeral session; all appear in list_all_tasks."""
-        import task_manager
+        from coda_mcp import task_manager
 
         tids = []
         for i in range(3):
@@ -438,7 +438,7 @@ class TestEdgeCases:
             assert tid in all_tids
 
     def test_corrupt_session_json_raises(self, isolated_sessions):
-        import task_manager
+        from coda_mcp import task_manager
 
         sid = task_manager.create_session("a@b.com", "u1")["session_id"]
         path = os.path.join(isolated_sessions, sid, "session.json")
