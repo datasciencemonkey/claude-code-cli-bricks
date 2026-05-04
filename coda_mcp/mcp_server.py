@@ -40,14 +40,22 @@ if _databricks_host:
 mcp = FastMCP(
     "coda",
     instructions=(
-        "CoDA MCP server — delegate coding tasks to AI agents on Databricks. "
-        "Workflow: 1) coda_run to submit work (returns immediately, runs in background), "
-        "2) continue your conversation — the task runs independently, "
-        "3) when the user asks about background work, or you want to check progress, "
-        "call coda_inbox — it shows ALL tasks (running, completed, failed) from the last 24h. "
-        "Use status filter to narrow: coda_inbox(status='running') for pending work only. "
-        "4) for completed tasks, call coda_get_result for full structured output. "
-        "To chain work: pass previous_session_id from a completed task's session_id "
+        "CoDA MCP server — delegate coding tasks to AI agents on Databricks.\n\n"
+        "CRITICAL — FIRE AND FORGET:\n"
+        "coda_run submits work and returns IMMEDIATELY. The task runs autonomously "
+        "in the background. After calling coda_run, DO NOT call coda_inbox or "
+        "coda_get_result to check on it. Do NOT loop, poll, or wait. Simply tell "
+        "the user the task was submitted and MOVE ON to their next request.\n\n"
+        "WHEN TO CHECK INBOX:\n"
+        "Call coda_inbox ONLY when the user explicitly asks about background tasks "
+        "(e.g. 'how's my task going?', 'check on that', 'what's in my inbox'). "
+        "Never call it proactively, automatically, or in a loop.\n\n"
+        "WORKFLOW:\n"
+        "1) coda_run — submit work, get back task_id. Tell user it's running. Stop.\n"
+        "2) Continue chatting about other topics — the task runs independently.\n"
+        "3) coda_inbox — ONLY when user asks. Shows all tasks from last 24h.\n"
+        "4) coda_get_result — for completed tasks, get full structured output.\n\n"
+        "CHAINING: pass previous_session_id from a completed task's session_id "
         "to give the new task context of what was done before."
     ),
     stateless_http=True,
@@ -171,10 +179,12 @@ async def coda_run(
     permissions: str = "smart",
     timeout_s: int = 3600,
 ) -> str:
-    """Submit a coding task to run in the background.
+    """Submit a coding task — FIRE AND FORGET.
 
-    Returns IMMEDIATELY with a task_id and session_id while agents work
-    in the background. Do NOT poll — use coda_inbox to check all tasks at once.
+    Returns IMMEDIATELY with a task_id. The task runs autonomously in the
+    background. After receiving the response, tell the user the task was
+    submitted and move on. Do NOT follow up with coda_inbox or coda_get_result
+    unless the user explicitly asks to check status later.
 
     ``context`` is a JSON string with Unity Catalog metadata (tables, schemas).
     ``previous_session_id`` chains to a prior task's session for context continuity.
