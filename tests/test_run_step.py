@@ -1,4 +1,4 @@
-"""Tests for _run_step — OAuth env stripping, PYTHONPATH injection, PATH setup."""
+"""Tests for _run_step and _configure_all_cli_auth — env setup for subprocesses."""
 
 import os
 import subprocess
@@ -117,3 +117,54 @@ class TestRunStepPath:
 
         call_env = mock_run.call_args.kwargs.get("env", {})
         assert "/app/python/source_code" in call_env.get("HOME", "")
+
+
+# ---------------------------------------------------------------------------
+# _configure_all_cli_auth — PAT reconfiguration path
+# ---------------------------------------------------------------------------
+
+class TestConfigureAllCliAuth:
+    """Verify _configure_all_cli_auth injects PYTHONPATH for setup script imports.
+
+    This is a separate code path from _run_step — it runs setup scripts via
+    subprocess.run after PAT rotation. Without PYTHONPATH, the scripts can't
+    `from utils import ...` since they live in setup/ subdirectory.
+    """
+
+    def _call_configure(self, mock_run, tmp_path, token="dapi_test"):
+        """Helper to call _configure_all_cli_auth with all dependencies mocked."""
+        from app import _configure_all_cli_auth
+        # Create .claude dir so settings.json write succeeds
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        with mock.patch("utils.resolve_and_cache_gateway"), \
+             mock.patch("app.get_gateway_host", return_value=None), \
+             mock.patch("app.ensure_https", return_value="https://test.databricks.com"), \
+             mock.patch("app.pat_rotator"), \
+             mock.patch.dict(os.environ, {"HOME": str(tmp_path)}):
+            _configure_all_cli_auth(token)
+
+    def test_injects_pythonpath(self, tmp_path):
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.MagicMock(returncode=0, stdout="", stderr="")
+            self._call_configure(mock_run, tmp_path)
+
+        # Find a subprocess call that runs a setup script
+        setup_calls = [c for c in mock_run.call_args_list
+                       if any("setup/" in str(a) for a in c[0][0])]
+        assert len(setup_calls) > 0, "Expected subprocess calls for setup scripts"
+
+        for call in setup_calls:
+            call_env = call.kwargs.get("env") or call[1].get("env", {})
+            assert "PYTHONPATH" in call_env, f"PYTHONPATH missing from env for {call[0][0]}"
+            assert call_env["PYTHONPATH"], "PYTHONPATH should not be empty"
+
+    def test_passes_token_in_env(self, tmp_path):
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.MagicMock(returncode=0, stdout="", stderr="")
+            self._call_configure(mock_run, tmp_path, token="dapi_mytoken")
+
+        setup_calls = [c for c in mock_run.call_args_list
+                       if any("setup/" in str(a) for a in c[0][0])]
+        for call in setup_calls:
+            call_env = call.kwargs.get("env") or call[1].get("env", {})
+            assert call_env.get("DATABRICKS_TOKEN") == "dapi_mytoken"
