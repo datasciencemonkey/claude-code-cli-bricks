@@ -84,4 +84,4 @@ mcp_starlette.add_middleware(
 # ── Top-level ASGI app ────────────────────────────────────────────
 # socketio.ASGIApp intercepts /socket.io/ for WebSocket + polling,
 # passes everything else to mcp_starlette (MCP at /mcp, Flask at /)
-app = socketio_lib.ASGIApp(sio, other_app=mcp_starlette)
+app = socketio_lib.ASGIApp(sio, other_asgi_app=mcp_starlette)
