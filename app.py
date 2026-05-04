@@ -328,7 +328,13 @@ def _configure_all_cli_auth(token):
 
     # 3. Re-run Codex, OpenCode, Gemini setup scripts with token in env
     #    They are idempotent: detect CLI already installed, just write config files
-    env = {**os.environ, "DATABRICKS_TOKEN": token}
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    existing_pp = os.environ.get("PYTHONPATH", "")
+    env = {
+        **os.environ,
+        "DATABRICKS_TOKEN": token,
+        "PYTHONPATH": f"{app_dir}:{existing_pp}" if existing_pp else app_dir,
+    }
     for script in ["setup/setup_codex.py", "setup/setup_opencode.py", "setup/setup_gemini.py", "setup/setup_hermes.py"]:
         try:
             result = subprocess.run(
