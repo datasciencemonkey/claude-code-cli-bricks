@@ -3,7 +3,7 @@
 [![Use this template](https://img.shields.io/badge/Use%20this%20template-2ea44f?logo=github)](https://github.com/datasciencemonkey/coding-agents-databricks-apps/generate)
 [![Deploy to Databricks](https://img.shields.io/badge/Deploy-Databricks%20Apps-FF3621?logo=databricks&logoColor=white)](docs/deployment.md)
 [![Agents](https://img.shields.io/badge/Agents-5%20included-green)](#whats-inside)
-[![Skills](https://img.shields.io/badge/Skills-39%20built--in-blue)](#-all-39-skills)
+[![Skills](https://img.shields.io/badge/Skills-43%20built--in-blue)](#-all-43-skills)
 
 > Run Claude Code, Codex, Gemini CLI, Hermes Agent, and OpenCode in your browser — zero setup, wired to your Databricks workspace.
 
@@ -57,7 +57,7 @@ This isn't just a terminal in the cloud. Running coding agents on Databricks giv
 | ✂️ **Split Panes** | Run two sessions side by side with a draggable divider |
 | 🌐 **WebSocket I/O** | Real-time terminal output over WebSocket — zero-latency, eliminates polling delay |
 | 🔁 **HTTP Polling Fallback** | Automatic fallback via Web Worker when WebSocket is unavailable |
-| 🚀 **Parallel Setup** | 7 agent setups run in parallel (~5x faster startup) |
+| 🚀 **Parallel Setup** | 6 agent setups run in parallel (~5x faster startup) |
 | 🔍 **Search** | Find anything in your terminal history (Ctrl+Shift+F) |
 | 🎤 **Voice Input** | Dictate commands with your mic (Option+V) |
 | 📋 **Image Paste** | Paste or drag-and-drop images into the terminal — saved to `~/uploads/`, path inserted automatically |
@@ -71,7 +71,7 @@ This isn't just a terminal in the cloud. Running coding agents on Databricks giv
 
 ## MLflow Tracing
 
-Every Claude Code session is **automatically traced** to a Databricks MLflow experiment — zero configuration required.
+Claude Code sessions can be **automatically traced** to a Databricks MLflow experiment. Tracing is disabled by default — set `MLFLOW_CLAUDE_TRACING_ENABLED=true` in your app environment to enable it.
 
 ### How it works
 
@@ -120,7 +120,7 @@ Tracing is configured during app startup by `setup/setup_mlflow.py`, which merge
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `MLFLOW_CLAUDE_TRACING_ENABLED` | `true` | Enables Claude Code tracing |
+| `MLFLOW_CLAUDE_TRACING_ENABLED` | `false` | Claude Code tracing (disabled by default, set to `true` to enable) |
 | `MLFLOW_TRACKING_URI` | `databricks` | Routes traces to Databricks backend |
 | `MLFLOW_EXPERIMENT_NAME` | `/Users/{owner}/{app}` | Target experiment path |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` | Overrides container OTEL to prevent trace loss |
@@ -170,7 +170,7 @@ This template repo opens that vision up for every Databricks user — no IDE set
 ---
 
 <details>
-<summary><strong>🧠 All 39 Skills</strong></summary>
+<summary><strong>🧠 All 43 Skills</strong></summary>
 
 ### Databricks Skills (25) — [ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit)
 
@@ -194,6 +194,12 @@ This template repo opens that vision up for every Databricks user — no IDE set
 | Review | requesting-review, receiving-review |
 | Ship | finishing-branch, git-worktrees |
 | Meta | dispatching-agents, writing-skills, using-superpowers |
+
+### BDD Skills (4)
+
+| Category | Skills |
+|----------|--------|
+| Testing | bdd-features, bdd-run, bdd-scaffold, bdd-steps |
 
 </details>
 
