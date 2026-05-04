@@ -39,6 +39,7 @@ From [obra/superpowers](https://github.com/obra/superpowers):
 
 - **DeepWiki** - AI-powered documentation for any GitHub repository
 - **Exa** - Web search and code context retrieval
+- **CoDA** (exposed at `/mcp`) - Delegate coding tasks to AI agents via MCP. Any MCP client (Genie Code, Claude Desktop, Cursor) can call `coda_run`, `coda_inbox`, and `coda_get_result` to submit background tasks, check status, and retrieve results. See `docs/mcp-v2-background-execution.md`.
 
 ## Databricks CLI
 
