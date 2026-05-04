@@ -641,7 +641,7 @@ def register_sio_handlers(sio):
         with sess["lock"]:
             sess["last_poll_time"] = time.time()
             sess["output_buffer"].clear()
-        sio.enter_room(sid, session_id)
+        await sio.enter_room(sid, session_id)
         logger.info(f"WebSocket client joined session room {session_id}")
         return {'status': 'ok'}
 
@@ -649,7 +649,7 @@ def register_sio_handlers(sio):
     async def handle_leave_session(sid, data):
         session_id = data.get('session_id')
         if session_id:
-            sio.leave_room(sid, session_id)
+            await sio.leave_room(sid, session_id)
             logger.info(f"WebSocket client left session room {session_id}")
 
     @sio.on('terminal_input')
