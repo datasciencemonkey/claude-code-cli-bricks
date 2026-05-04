@@ -619,6 +619,13 @@ def register_sio_handlers(sio):
         # Capture event loop on first connection for _emit_from_thread()
         set_async_sio(sio, asyncio.get_running_loop())
 
+        # Diagnostic: log transport and header presence for debugging proxy behavior
+        transport = environ.get('QUERY_STRING', '')
+        has_email = bool(environ.get('HTTP_X_FORWARDED_EMAIL'))
+        has_user = bool(environ.get('HTTP_X_FORWARDED_USER'))
+        logger.info(f"WS connect: sid={sid}, qs={transport}, "
+                     f"has_email={has_email}, has_user={has_user}")
+
         if not _check_ws_authorization_from_environ(environ):
             raise ConnectionRefusedError('unauthorized')
         logger.info("WebSocket client connected (ASGI)")
