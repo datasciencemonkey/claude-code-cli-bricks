@@ -198,6 +198,16 @@ def wrap_prompt(
         f"   echo '{{...}}' > {results_dir}/result.json\n"
         f"\n"
         f"3. If you delegate to a sub-agent, update status.jsonl with delegation steps.\n"
+        f"\n"
+        f"SAFETY:\n"
+        f"- Do NOT delete, drop, or truncate tables, schemas, catalogs, or volumes.\n"
+        f"- Do NOT delete files outside the current project directory.\n"
+        f"- Do NOT run destructive Databricks CLI commands (e.g. databricks clusters delete, "
+        f"databricks jobs delete, databricks pipelines delete).\n"
+        f"- Do NOT modify permissions, grants, or access controls unless explicitly requested.\n"
+        f"- Prefer CREATE OR REPLACE over DROP+CREATE. Prefer INSERT/MERGE over DELETE+INSERT.\n"
+        f"- If the task requires a destructive operation, describe what you would do in "
+        f"result.json with status \"needs_approval\" instead of executing it.\n"
         f"---END-CODA-TASK---"
     )
 
