@@ -7,10 +7,7 @@ while serving MCP over standard HTTP.
 import asyncio
 import json
 import logging
-import os
-
 from flask import Blueprint, request, jsonify
-from utils import ensure_https
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +37,6 @@ CAPABILITIES = {
     "tools": {"listChanged": False},
 }
 
-
-def _check_origin():
-    """Validate Origin header against workspace URL."""
-    origin = request.headers.get("Origin", "")
-    if not origin:
-        return True  # No origin = same-origin or non-browser
-    databricks_host = os.environ.get("DATABRICKS_HOST", "")
-    if not databricks_host:
-        return True  # No host configured = allow all
-    allowed = ensure_https(databricks_host).rstrip("/")
-    return origin.rstrip("/") == allowed
 
 
 def _cors_headers():
