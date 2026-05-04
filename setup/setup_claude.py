@@ -90,13 +90,17 @@ print(f"Onboarding skipped + MCPs configured: {claude_json_path}")
 local_bin = home / ".local" / "bin"
 claude_bin = local_bin / "claude"
 
-print("Installing/upgrading Claude Code CLI...")
-result = subprocess.run(
-    ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
-    env={**os.environ, "HOME": str(home)},
-    capture_output=True,
-    text=True
-)
+if os.environ.get("SKIP_CLAUDE_INSTALL"):
+    print("SKIP_CLAUDE_INSTALL set — skipping CLI install")
+    result = type("R", (), {"returncode": 0, "stderr": ""})()
+else:
+    print("Installing/upgrading Claude Code CLI...")
+    result = subprocess.run(
+        ["bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True
+    )
 if result.returncode == 0:
     print("Claude Code CLI installed successfully")
 else:

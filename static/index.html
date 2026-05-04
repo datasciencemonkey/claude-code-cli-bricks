@@ -955,7 +955,10 @@
         return;
       }
 
-      socket = io({ transports: ['websocket', 'polling'] });
+      // Start with polling (HTTP) so Databricks proxy identity headers are present
+      // for auth, then upgrade to WebSocket transparently. Direct WebSocket-first
+      // fails because the proxy doesn't inject X-Forwarded-Email on WS upgrade.
+      socket = io({ transports: ['polling', 'websocket'] });
 
       socket.on('connect', () => {
         // Check actual transport — Socket.IO reports connected=true even on long-polling
