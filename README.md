@@ -1,5 +1,5 @@
 # Coding Agents on Databricks Apps
-NOTE:
+🚨🚨🚨 NOTE:
 This project has moved from my personal handle into Datbaricks Labs. We will continue to work on it under Databricks Labs
 [THIS PROJECT IS NOW A PART OF DATABRICKS LABS](https://github.com/databrickslabs/coding-agents-databricks-apps)
 
