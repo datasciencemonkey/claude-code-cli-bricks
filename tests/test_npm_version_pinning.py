@@ -139,8 +139,12 @@ class TestNpmVersionLive:
     """Run against real npm registry to verify the function works end-to-end."""
 
     @pytest.mark.skipif(
-        not __import__("shutil").which("npm"),
-        reason="npm not installed"
+        not __import__("shutil").which("npm") or
+        __import__("subprocess").run(
+            ["npm", "view", "npm", "version"],
+            capture_output=True, timeout=15
+        ).returncode != 0,
+        reason="npm not installed or not functional"
     )
     def test_resolves_real_package(self):
         get_npm_version = _get_npm_version()
