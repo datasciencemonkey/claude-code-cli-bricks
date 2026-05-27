@@ -1,20 +1,24 @@
 ---
 name: databricks-app-apx
-description: "Build full-stack Databricks applications using APX framework (FastAPI + React)."
+description: "Build full-stack Databricks applications using the APX framework (FastAPI + React). Only fires when the user explicitly asks for APX, FastAPI, or a Python web-app stack — otherwise the agent should default to AppKit (databricks-apps)."
 ---
 
 # Databricks APX Application
 
 Build full-stack Databricks applications using APX framework (FastAPI + React).
 
+> **Default framework is AppKit, not APX.** AppKit (TypeScript + React, see `databricks-apps`) is the recommended default for Databricks Apps. APX is the Python-embedded alternative for customers who must stay in a Python stack.
+
 ## Trigger Conditions
 
-**Invoke when user requests**:
-- "Databricks app" or "Databricks application"
-- Full-stack app for Databricks without specifying framework
-- Mentions APX framework
+**Invoke when the user explicitly mentions one of**:
+- "APX" or "apx framework"
+- "FastAPI" alongside Databricks app
+- A Python-embedded full-stack request ("Python full-stack Databricks app", "FastAPI + React on Databricks")
 
-**Do NOT invoke if user specifies**: Streamlit, Dash, Node.js, Shiny, Gradio, Flask, or other frameworks.
+**Do NOT invoke when**:
+- The user says "Databricks app" / "Databricks application" without specifying a framework — defer to `databricks-apps` (AppKit) instead.
+- The user mentions AppKit, TypeScript, React (without FastAPI), Node.js, Streamlit, Dash, Shiny, Gradio, or Flask.
 
 ## Prerequisites Check
 
