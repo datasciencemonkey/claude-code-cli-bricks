@@ -88,7 +88,7 @@ Real-time terminal I/O over **WebSocket** (Flask-SocketIO) with automatic **HTTP
 
 ## Credits
 
-- Databricks skills from [databricks-solutions/ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit)
+- Databricks skills from [databricks/databricks-agent-skills](https://github.com/databricks/databricks-agent-skills) (canonical source; the legacy [databricks-solutions/ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit) is deprecated)
 - Development workflow skills from [obra/superpowers](https://github.com/obra/superpowers)
 
 # things to remember
