@@ -11,7 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from utils import ensure_https, get_gateway_host, get_npm_version
+from utils import ensure_https, get_gateway_host, get_npm_version, mirror_claude_skills
 
 # content-filter proxy local proxy — sanitizes empty content blocks before reaching Databricks
 # (see https://github.com/sst/opencode/issues/5028)
@@ -277,6 +277,9 @@ print(f"OpenCode configured: {config_path}")
 # OpenCode stores credentials at ~/.local/share/opencode/auth.json
 opencode_data_dir = home / ".local" / "share" / "opencode"
 opencode_data_dir.mkdir(parents=True, exist_ok=True)
+
+# Mirror Claude skills into ~/.local/share/opencode/skills so OpenCode sees them
+mirror_claude_skills(opencode_data_dir / "skills", "OpenCode")
 
 if gateway_host:
     auth_data = {

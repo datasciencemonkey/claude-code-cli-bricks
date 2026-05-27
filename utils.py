@@ -4,8 +4,27 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+
+def mirror_claude_skills(target_dir: Path, agent_name: str) -> None:
+    """Mirror ~/.claude/skills into ``target_dir`` so non-Claude agents see them.
+
+    Replaces ``target_dir`` if it already exists (idempotent across restarts).
+    Resolves the Claude skills directory via ``HOME``, falling back to a no-op
+    if nothing is there (the same shape `setup_gemini.py` uses for Gemini).
+    """
+    home = Path(os.environ.get("HOME", "/app/python/source_code"))
+    claude_skills_dir = home / ".claude" / "skills"
+    if not claude_skills_dir.exists():
+        print(f"No Claude skills at {claude_skills_dir}, skipping {agent_name} mirror")
+        return
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(claude_skills_dir, target_dir)
+    print(f"Skills mirrored: {claude_skills_dir} -> {target_dir}")
 
 
 def get_npm_version(package_name):
