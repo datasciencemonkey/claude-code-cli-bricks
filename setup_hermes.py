@@ -25,7 +25,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from utils import adapt_instructions_file, ensure_https, get_gateway_host
+from utils import adapt_instructions_file, ensure_https, get_gateway_host, mirror_claude_skills
 
 # Opt-out: allow operators to disable Hermes bundling without removing the file.
 if os.environ.get("ENABLE_HERMES", "true").strip().lower() in ("false", "0", "no"):
@@ -57,6 +57,9 @@ HERMES_EXTRA_DEPS = ["mcp>=1.2.0"]
 local_bin = home / ".local" / "bin"
 local_bin.mkdir(parents=True, exist_ok=True)
 hermes_home.mkdir(parents=True, exist_ok=True)
+
+# Mirror Claude skills into ~/.hermes/skills so Hermes sees the same skill content
+mirror_claude_skills(hermes_home / "skills", "Hermes")
 
 
 def _run(cmd, **kwargs):

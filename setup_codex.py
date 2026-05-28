@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from utils import adapt_instructions_file, ensure_https, get_gateway_host, get_npm_version
+from utils import adapt_instructions_file, ensure_https, get_gateway_host, get_npm_version, mirror_claude_skills
 
 # Set HOME if not properly set
 if not os.environ.get("HOME") or os.environ["HOME"] == "/":
@@ -92,6 +92,9 @@ else:
 # 3. Create ~/.codex directory and write config.toml
 codex_dir = home / ".codex"
 codex_dir.mkdir(exist_ok=True)
+
+# Mirror Claude skills into ~/.codex/skills so Codex sees the same skill content
+mirror_claude_skills(codex_dir / "skills", "Codex")
 
 # Copy bundled Databricks model catalog into ~/.codex so it can be referenced
 # by relative path in config.toml (codex resolves relatives against CODEX_HOME).
