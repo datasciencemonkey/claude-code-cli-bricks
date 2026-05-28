@@ -175,7 +175,7 @@ This template repo opens that vision up for every Databricks user — no IDE set
 <details>
 <summary><strong>🧠 All 39 Skills</strong></summary>
 
-### Databricks Skills (25) — [ai-dev-kit](https://github.com/databricks-solutions/ai-dev-kit)
+### Databricks Skills (25) — [databricks-agent-skills](https://github.com/databricks/databricks-agent-skills)
 
 | Category | Skills |
 |----------|--------|
