@@ -214,6 +214,8 @@ This template repo opens that vision up for every Databricks user — no IDE set
 <details>
 <summary><strong>🏗️ Architecture</strong></summary>
 
+> Full reference write-up — PTY allocation, transport fallback, PAT auto-rotation, workspace sync, single-user gate — lives at [docs/architecture/pty-on-apps.md](docs/architecture/pty-on-apps.md). Read that if you're considering building a similar hosted-agent product on Databricks Apps.
+
 ```
 ┌─────────────────────┐  WebSocket    ┌─────────────────────┐
 │   Browser Client    │◄═══════════►│   Gunicorn + Flask   │
